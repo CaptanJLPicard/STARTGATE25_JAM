@@ -101,21 +101,21 @@ public class Player : NetworkBehaviour
 
             float speed = IsSprinting ? sprintSpeed : moveSpeed;
 
+            // Kamera yÃ¶nlerini hesapla
+            Vector3 forward = Quaternion.Euler(0, Yaw, 0) * Vector3.forward;
+            Vector3 right = Quaternion.Euler(0, Yaw, 0) * Vector3.right;
+
             if (moving)
             {
-                Vector3 forward = Quaternion.Euler(0, Yaw, 0) * Vector3.forward;
-                Vector3 right = Quaternion.Euler(0, Yaw, 0) * Vector3.right;
+                // Hareket yÃ¶nÃ¼nÃ¼ hesapla (kameraya gÃ¶re)
                 Vector3 moveDir = (forward * dir.z + right * dir.x).normalized;
 
                 _cc.maxSpeed = speed;
                 _cc.Move(moveDir * speed);
 
-                // Rotasyonu network'e kaydet
-                if (moveDir.sqrMagnitude > 0.01f)
-                {
-                    Quaternion targetRot = Quaternion.LookRotation(moveDir);
-                    ModelRotation = Quaternion.Slerp(ModelRotation, targetRot, Runner.DeltaTime * rotationSpeed);
-                }
+                // Hareket yÃ¶nÃ¼ne dÃ¶ndÃ¼r
+                Quaternion targetRot = Quaternion.LookRotation(moveDir);
+                ModelRotation = Quaternion.Slerp(ModelRotation, targetRot, Runner.DeltaTime * rotationSpeed);
             }
             else
             {
@@ -133,9 +133,13 @@ public class Player : NetworkBehaviour
     public override void Render()
     {
         // Model rotasyonunu uygula (tum oyuncular icin)
-        if (_model != null)
+        if (_model != null && _model != transform)
         {
             _model.rotation = ModelRotation;
+        }
+        else if (playerModel != null)
+        {
+            playerModel.rotation = ModelRotation;
         }
 
         // Animasyon
@@ -168,6 +172,16 @@ public class Player : NetworkBehaviour
         if (cam == null) return;
 
         Vector3 targetPos = transform.position + Vector3.up * cameraHeight;
+
+        // Hareket ederken kamera karakterin arkasÄ±ndan baksÄ±n
+        if (IsMoving)
+        {
+            // Karakterin baktÄ±ÄŸÄ± yÃ¶nÃ¼ al
+            float modelYaw = ModelRotation.eulerAngles.y;
+            // Yaw'Ä± karakterin arkasÄ±na yumuÅŸak geÃ§iÅŸ yap
+            _yaw = Mathf.LerpAngle(_yaw, modelYaw, Time.deltaTime * cameraSmoothness);
+        }
+
         Quaternion rotation = Quaternion.Euler(_pitch, _yaw, 0);
         Vector3 desiredPos = targetPos - rotation * Vector3.forward * cameraDistance;
 
@@ -212,7 +226,7 @@ public class Player : NetworkBehaviour
 
         if (Object.HasInputAuthority)
         {
-            Debug.Log($"<color=green>Ýlk spawn noktasýna dönüyorsun!</color>");
+            Debug.Log($"<color=green>ï¿½lk spawn noktasï¿½na dï¿½nï¿½yorsun!</color>");
         }
     }
     [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
@@ -229,12 +243,12 @@ public class Player : NetworkBehaviour
 
                 if (Object.HasInputAuthority)
                 {
-                    Debug.Log($"<color=green>Spawn noktasýna ýþýnlandýnýz!</color>");
+                    Debug.Log($"<color=green>Spawn noktasï¿½na ï¿½ï¿½ï¿½nlandï¿½nï¿½z!</color>");
                 }
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"Teleport hatasý: {e.Message}");
+                Debug.LogWarning($"Teleport hatasï¿½: {e.Message}");
                 transform.position = targetPosition;
             }
         }

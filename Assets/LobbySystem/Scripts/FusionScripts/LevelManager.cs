@@ -10,7 +10,7 @@ public class LevelManager : NetworkBehaviour
     [SerializeField] private int currentScene;
     [SerializeField] private GameObject EscapePanel;
     [SerializeField] private GameObject SettingsPanel;
-    [SerializeField] private GameObject restartButton; // <-- Restart butonu referansı
+    [SerializeField] private GameObject restartButton;
 
     public bool stop;
     [SerializeField] private Transform spawnPosition;
@@ -18,9 +18,9 @@ public class LevelManager : NetworkBehaviour
     public override void Spawned()
     {
         if (fm == null)
-            fm = FindAnyObjectByType<FusionManager>();
+            fm = FindFirstObjectByType<FusionManager>(FindObjectsInactive.Include);
 
-        // Restart butonu sadece StateAuthority (host) ise görünsün
+        // Restart butonu sadece host
         if (restartButton != null)
             restartButton.SetActive(HasStateAuthority);
     }
@@ -43,7 +43,6 @@ public class LevelManager : NetworkBehaviour
             Player player = other.GetComponent<Player>();
             if (player != null)
             {
-                // İLK SPAWN YERİNE IŞINLA
                 player.RPC_TeleportToInitialSpawn();
             }
         }
@@ -54,40 +53,36 @@ public class LevelManager : NetworkBehaviour
         if (Input.GetKeyDown(KeyCode.Escape))
         {
             stop = !stop;
-            EscapePanel.SetActive(stop);
+            if (EscapePanel != null) EscapePanel.SetActive(stop);
         }
     }
 
     // === MAIN MENU ===
     public void MainMenuBtn()
     {
-        if (HasStateAuthority)
-            ExecuteMainMenu();
-        else
-            RPC_MainMenu();
-    }
-
-    [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
-    private void RPC_MainMenu()
-    {
+        // Herkes (client dahil) kendi tarafında çıkabilsin
         ExecuteMainMenu();
     }
 
     private void ExecuteMainMenu()
     {
+        if (fm == null)
+            fm = FindFirstObjectByType<FusionManager>(FindObjectsInactive.Include);
+
         if (fm != null)
         {
             _ = fm.LeaveToMainMenuAsync();
+        }
+        else
+        {
+            Debug.LogWarning("FusionManager bulunamadı, odadan çıkılamadı!");
         }
     }
 
     // === RESTART ===
     public void RestartBtn()
     {
-        // Güvenlik: Host değilse hiç restart yapma
-        if (!HasStateAuthority)
-            return;
-
+        if (!HasStateAuthority) return;
         ExecuteRestart();
     }
 
@@ -103,13 +98,13 @@ public class LevelManager : NetworkBehaviour
     // === SETTINGS ===
     public void SettingsBtn()
     {
-        SettingsPanel.SetActive(true);
-        EscapePanel.SetActive(false);
+        if (SettingsPanel != null) SettingsPanel.SetActive(true);
+        if (EscapePanel != null) EscapePanel.SetActive(false);
     }
 
     public void SettingsBtnClose()
     {
-        SettingsPanel.SetActive(false);
-        EscapePanel.SetActive(true);
+        if (SettingsPanel != null) SettingsPanel.SetActive(false);
+        if (EscapePanel != null) EscapePanel.SetActive(true);
     }
 }

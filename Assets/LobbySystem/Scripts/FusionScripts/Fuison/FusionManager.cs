@@ -511,6 +511,7 @@ public class FusionManager : MonoBehaviour, INetworkRunnerCallbacks
         if (dir.magnitude > 1f) dir.Normalize();
         data.direction = dir;
 
+        data.mouseDelta = new Vector2(Input.GetAxisRaw("Mouse X"), Input.GetAxisRaw("Mouse Y"));
         data.isJumping = _isJumping;
         data.isSprinting = _isSprinting;
         data.isFreeze = _isFreeze;
