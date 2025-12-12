@@ -70,8 +70,8 @@ public class Player : NetworkBehaviour
                 cam.gameObject.SetActive(true);
             }
 
-            Cursor.lockState = CursorLockMode.Locked;
-            Cursor.visible = false;
+            //Cursor.lockState = CursorLockMode.Locked;
+            //Cursor.visible = false;
         }
         else
         {
