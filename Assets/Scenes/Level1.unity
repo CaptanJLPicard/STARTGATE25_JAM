@@ -1591,9 +1591,9 @@ RectTransform:
   - {fileID: 592635038}
   m_Father: {fileID: 1328720653}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 0, y: -250}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 425, y: 125}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &453132011
@@ -2091,14 +2091,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 187355a893d7beb4792c1d2557bb9c79, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  EN: SETTINGS
-  TR: AYARLAR
-  FR: "PARAM\xC8TRES"
-  ITL: IMPOSTAZIONI
-  GRM: EINSTELLUNGEN
-  ISP: "CONFIGURACI\xD3N"
-  BUL: "\u041D\u0410\u0421\u0422\u0420\u041E\u0419\u041A\u0418"
-  CZE: "NASTAVEN\xCD"
+  EN: Quit
+  TR: "\xC7\u0131k\u0131\u015F"
+  FR: 'Quitter '
+  ITL: Esentato
+  GRM: "Aufh\xF6ren"
+  ISP: Abandonar
+  BUL: "\u0418\u0437\u0445\u043E\u0434"
+  CZE: "P\u0159estat"
 --- !u!114 &588044760
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -2248,14 +2248,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 187355a893d7beb4792c1d2557bb9c79, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  EN: CREATE GAME
-  TR: ODA KUR
-  FR: "CR\xC9ER UNE PARTIE"
-  ITL: CREA UNA PARTITA
-  GRM: SPIEL ERSTELLEN
-  ISP: CREAR JUEGO
-  BUL: "\u0421\u042A\u0417\u0414\u0410\u0412\u0410\u041D\u0415 \u041D\u0410 \u0418\u0413\u0420\u0410"
-  CZE: "VYTVO\u0158IT HRU"
+  EN: Restart
+  TR: "Yeniden Ba\u015Flat"
+  FR: "Red\xE9marrage"
+  ITL: Ricomincia
+  GRM: Neustart
+  ISP: Reanudar
+  BUL: "\u0420\u0435\u0441\u0442\u0430\u0440\u0442\u0438\u0440\u0430\u043D\u0435"
+  CZE: Restartovat
 --- !u!114 &592635040
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3769,7 +3769,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!224 &1244757068
 RectTransform:
   m_ObjectHideFlags: 0
@@ -4955,15 +4955,14 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 187355a893d7beb4792c1d2557bb9c79, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  EN: JOIN GAME
-  TR: OYUNA KATIL
-  FR: REJOINDRE LA PARTIE
-  ITL: UNISCITI ALLA PARTITA
-  GRM: SPIEL BEITRETEN
-  ISP: UNIRSE AL JUEGO
-  BUL: "\u041F\u0420\u0418\u0421\u042A\u0415\u0414\u0418\u041D\u042F\u0412\u0410\u041D\u0415
-    \u041A\u042A\u041C \u0418\u0413\u0420\u0410"
-  CZE: "P\u0158IPOJIT SE HR\u011A"
+  EN: Settings
+  TR: Ayarlar
+  FR: "Param\xE8tres"
+  ITL: Impostazioni
+  GRM: Einstellungen
+  ISP: Ajustes
+  BUL: "\u041D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438"
+  CZE: "Nastaven\xED"
 --- !u!114 &1585810992
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5098,9 +5097,9 @@ RectTransform:
   - {fileID: 588044758}
   m_Father: {fileID: 1328720653}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 0, y: -431.6667}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 425, y: 125}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1623765783
@@ -6476,9 +6475,9 @@ RectTransform:
   - {fileID: 1585810990}
   m_Father: {fileID: 1328720653}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: -212.5, y: -5.8333435}
+  m_AnchorMin: {x: 0, y: 0}
+  m_AnchorMax: {x: 0, y: 0}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 425, y: 125}
   m_Pivot: {x: 0, y: 1}
 --- !u!114 &2070990581
