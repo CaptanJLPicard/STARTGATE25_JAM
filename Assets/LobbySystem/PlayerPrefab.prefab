@@ -12,7 +12,6 @@ GameObject:
   - component: {fileID: 8835895581385327718}
   - component: {fileID: 5649700256475049826}
   - component: {fileID: 3170504251258080380}
-  - component: {fileID: 8587947434562862792}
   m_Layer: 0
   m_Name: PlayerPrefab
   m_TagString: Untagged
@@ -82,48 +81,4 @@ MonoBehaviour:
   NestedObjects: []
   NetworkedBehaviours:
   - {fileID: 5649700256475049826}
-  - {fileID: 8587947434562862792}
   ForceRemoteRenderTimeframe: 0
---- !u!114 &8587947434562862792
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3629030424632829078}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 0c41920c8d8e6e248af052ac71d5bbf2, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  _characterController: {fileID: 0}
-  playerAnim: {fileID: 0}
-  moveSpeed: 5
-  runSpeed: 8
-  jumpForce: 5
-  _NetIsRunning:
-    _value: 0
-  _NetIsJumping:
-    _value: 0
-  _NetIsFreeze:
-    _value: 0
-  _NetVelocity: {x: 0, y: 0, z: 0}
-  _NetIsCurrentSpeed: 0
-  _NetIsTouchingWall:
-    _value: 0
-  _IsReady: 0
-  _Nick:
-    _length: 0
-    _data:
-      Data: 00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
-  gamePanel: {fileID: 0}
-  escPanel: {fileID: 0}
-  settingsPanel: {fileID: 0}
-  _gameReady: 0
-  isSprinting: 0
-  isJumping: 0
-  isFreeze: 0
-  currentSpeed: 0
-  isTouchingWall: 0
-  runningSmoothness: 5
-  _nickNameText: {fileID: 0}

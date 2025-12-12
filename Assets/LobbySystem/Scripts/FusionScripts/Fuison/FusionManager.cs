@@ -51,9 +51,9 @@ public class FusionManager : MonoBehaviour, INetworkRunnerCallbacks
     public event Action<List<SessionInfo>> SessionsUpdated;
     public event Action OnRunnerShutdown;
 
-    private bool _isSprinting;
-    private bool _isJumping;
-    private bool _isFreeze;
+    private NetworkBool _isSprinting;
+    private NetworkBool _isJumping;
+    private NetworkBool _isFreeze;
 
     private Task _lobbyJoinTask;
     public bool LobbyReady { get; private set; }
