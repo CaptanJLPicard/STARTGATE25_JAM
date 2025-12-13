@@ -12,23 +12,31 @@ public class DroppedPickup : NetworkBehaviour
     [SerializeField] private Collider pickupCollider;
 
     [Header("Bonus Values (Inspector'dan veya spawn sırasında ayarlanır)")]
-    public float growthAmount = 0.1f;
+    [SerializeField] private float defaultGrowthAmount = 0.1f;
 
     // Network synced
     [Networked] private TickTimer LifetimeTimer { get; set; }
     [Networked] private TickTimer ActivationTimer { get; set; }
     [Networked] private NetworkBool IsActive { get; set; }
-    [Networked] private float NetworkedScale { get; set; }
+    [Networked] private float NetworkedScale { get; set; } = 1f; // Default 1 olmalı, 0 olursa görünmez
+    [Networked] public float GrowthAmount { get; set; } // Network synced growth value
 
     private float lifetime;
     private Vector3 _baseScale; // Prefab'ın orijinal scale değeri
 
     public override void Spawned()
     {
-        Debug.Log($"[DroppedPickup] Spawned! HasStateAuthority: {Object.HasStateAuthority}, HasInputAuthority: {Object.HasInputAuthority}");
+        Debug.Log($"[DroppedPickup] Spawned! HasStateAuthority: {Object.HasStateAuthority}, HasInputAuthority: {Object.HasInputAuthority}, NetworkedScale: {NetworkedScale}");
 
-        // Prefab'ın orijinal scale değerini kaydet
-        _baseScale = transform.localScale;
+        // Prefab'ın orijinal scale değerini kaydet (0 olmamalı)
+        if (transform.localScale.sqrMagnitude > 0.001f)
+        {
+            _baseScale = transform.localScale;
+        }
+        else
+        {
+            _baseScale = Vector3.one;
+        }
 
         // Collider'ı bul
         if (pickupCollider == null)
@@ -42,15 +50,24 @@ public class DroppedPickup : NetworkBehaviour
             pickupCollider.enabled = false;
         }
 
-        // StateAuthority timer'ları başlatır
+        // StateAuthority timer'ları ve değerleri başlatır
         if (Object.HasStateAuthority)
         {
             ActivationTimer = TickTimer.CreateFromSeconds(Runner, activationDelay);
             IsActive = false;
-            NetworkedScale = 1f;
+            // NetworkedScale zaten SetScaleMultiplier ile ayarlanmış olabilir, kontrol et
+            if (NetworkedScale <= 0.01f)
+            {
+                NetworkedScale = 1f;
+            }
+            // GrowthAmount default değeri
+            if (GrowthAmount <= 0f)
+            {
+                GrowthAmount = defaultGrowthAmount;
+            }
         }
 
-        // Scale'i uygula
+        // Scale'i uygula - tüm clientlar için
         ApplyScale();
     }
 
@@ -71,7 +88,10 @@ public class DroppedPickup : NetworkBehaviour
     /// </summary>
     public void SetGrowthAmount(float growth)
     {
-        growthAmount = growth;
+        if (Object.HasStateAuthority)
+        {
+            GrowthAmount = growth;
+        }
     }
 
     /// <summary>
@@ -95,7 +115,10 @@ public class DroppedPickup : NetworkBehaviour
         {
             _baseScale = Vector3.one;
         }
-        transform.localScale = _baseScale * NetworkedScale;
+
+        // NetworkedScale sync olmadan önce 0 olabilir, bu durumda 1 kullan
+        float scaleToApply = NetworkedScale > 0.01f ? NetworkedScale : 1f;
+        transform.localScale = _baseScale * scaleToApply;
     }
 
     public override void FixedUpdateNetwork()

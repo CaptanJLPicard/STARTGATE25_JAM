@@ -118,10 +118,14 @@ public class Player : NetworkBehaviour
 
     // Scale System - Local
     private float _displayScale; // Görsel smooth scale
+    private float _scaleVelocity; // SmoothDamp için velocity
     private float _baseMoveSpeed; // Başlangıç yürüme hızı
     private float _baseSprintSpeed; // Başlangıç koşu hızı
     private float _baseJumpForce; // Başlangıç zıplama gücü
     private TickTimer _dropTimer; // Pickup drop zamanlayıcısı
+    private float _pendingScaleChange; // Birikmiş scale değişikliği (threshold için)
+    private const float SCALE_UPDATE_THRESHOLD = 0.02f; // Network update threshold
+    private const float SCALE_SMOOTH_TIME = 0.15f; // Scale geçiş süresi
 
     // Nickname - Local
     private Camera _mainCamera; // Billboard efekti için ana kamera
@@ -153,6 +157,15 @@ public class Player : NetworkBehaviour
     private const float ROTATION_INTERPOLATION_SPEED = 20f;
     private const float POSITION_SMOOTH_TIME = 0.05f; // 50ms smoothing
     private const float MOVEMENT_STATE_SMOOTHING = 12f;
+
+    // Kamera smoothing - ayrı sistem (jitter önleme)
+    private Vector3 _cameraTargetPos; // Kamera hedef pozisyonu
+    private Vector3 _cameraTargetVelocity; // Kamera hedef smooth velocity
+    private Vector3 _cameraPosVelocity; // Kamera pozisyon smooth velocity
+    private float _cameraDistanceVelocity; // Kamera mesafe smooth velocity
+    private bool _cameraInitialized;
+    private const float CAMERA_TARGET_SMOOTH_TIME = 0.08f; // Hedef smooth süresi
+    private const float CAMERA_POS_SMOOTH_TIME = 0.06f; // Kamera pozisyon smooth süresi
 
     public override void Spawned()
     {
@@ -202,6 +215,10 @@ public class Player : NetworkBehaviour
                 cam.enabled = true;
                 cam.gameObject.SetActive(true);
             }
+
+            // Kamera smoothing başlangıç değerleri
+            _cameraTargetPos = transform.position + Vector3.up * cameraHeight;
+            _cameraInitialized = true;
 
             //Cursor.lockState = CursorLockMode.Locked;
             //Cursor.visible = false;
@@ -302,44 +319,43 @@ public class Player : NetworkBehaviour
                 // Havadayken: düşüyor mu kontrol et
                 NetIsFalling = verticalVelocity < fallingThreshold;
             }
-        }
 
-        // Scale System - Zamana bağlı küçülme
-        // InputAuthority: Kendi karakteri için scale güncellemesi ister
-        // StateAuthority: Scale'i gerçekten günceller
-        if (shrinkDuration > 0 && IsMoving)
-        {
-            float shrinkRate = (startScale - minScale) / shrinkDuration;
-
-            // Koşarken daha hızlı küçül
-            if (IsSprinting)
+            // Scale System - Zamana bağlı küçülme (GetInput içinde - input olan oyuncu için)
+            if (shrinkDuration > 0 && moving)
             {
-                shrinkRate *= sprintShrinkMultiplier;
-            }
+                float shrinkRate = (startScale - minScale) / shrinkDuration;
 
-            // StateAuthority scale'i günceller
-            if (Object.HasStateAuthority)
-            {
-                float newScale = CurrentScale - (shrinkRate * Runner.DeltaTime);
-                CurrentScale = Mathf.Clamp(newScale, minScale, maxScale);
-                UpdateStatsBasedOnScale();
-            }
-
-            // Pickup spawn - Her oyuncu kendi pickup'ını spawn edebilir
-            if (CurrentScale > minScale && droppedPickupPrefab != null)
-            {
-                if (_dropTimer.ExpiredOrNotRunning(Runner))
+                // Koşarken daha hızlı küçül
+                if (input.isSprinting)
                 {
-                    // Host ise direkt spawn et, client ise RPC ile iste
-                    if (Object.HasStateAuthority)
+                    shrinkRate *= sprintShrinkMultiplier;
+                }
+
+                // StateAuthority scale'i günceller
+                if (Object.HasStateAuthority)
+                {
+                    float newScale = CurrentScale - (shrinkRate * Runner.DeltaTime);
+                    CurrentScale = Mathf.Clamp(newScale, minScale, maxScale);
+                    UpdateStatsBasedOnScale();
+                }
+
+                // Pickup spawn - Input alan oyuncu için (kendi karakteri)
+                if (droppedPickupPrefab != null)
+                {
+                    if (_dropTimer.ExpiredOrNotRunning(Runner))
                     {
-                        SpawnDroppedPickup();
+                        // Host ise direkt spawn et, client ise RPC ile iste
+                        if (Object.HasStateAuthority)
+                        {
+                            SpawnDroppedPickup();
+                        }
+                        else
+                        {
+                            // Client: RPC ile host'a spawn isteği gönder
+                            RPC_RequestSpawnPickup(transform.position, CurrentScale);
+                        }
+                        _dropTimer = TickTimer.CreateFromSeconds(Runner, dropInterval);
                     }
-                    else
-                    {
-                        RPC_RequestSpawnPickup(transform.position, CurrentScale);
-                    }
-                    _dropTimer = TickTimer.CreateFromSeconds(Runner, dropInterval);
                 }
             }
         }
@@ -350,15 +366,21 @@ public class Player : NetworkBehaviour
         // Scale System - Smooth scale geçişi (tüm oyuncular için)
         if (CurrentScale > 0)
         {
-            _displayScale = Mathf.Lerp(_displayScale, CurrentScale, Time.deltaTime * scaleSmoothness);
+            // SmoothDamp kullan - Lerp'ten çok daha smooth, jitter önler
+            _displayScale = Mathf.SmoothDamp(_displayScale, CurrentScale, ref _scaleVelocity, SCALE_SMOOTH_TIME);
             transform.localScale = Vector3.one * _displayScale;
         }
 
         // Model rotasyonunu INTERPOLATE ederek uygula (jitter önleme)
+        // Scale'e göre daha yavaş rotasyon geçişi
+        float safeStartScale = startScale > 0.01f ? startScale : 1f;
+        float scaleRatio = _displayScale / safeStartScale;
+        float dynamicRotSpeed = ROTATION_INTERPOLATION_SPEED / Mathf.Clamp(scaleRatio, 0.5f, 2f);
+
         _interpolatedModelRotation = Quaternion.Slerp(
             _interpolatedModelRotation,
             ModelRotation,
-            Time.deltaTime * ROTATION_INTERPOLATION_SPEED
+            Time.deltaTime * dynamicRotSpeed
         );
 
         if (_model != null && _model != transform)
@@ -450,13 +472,18 @@ public class Player : NetworkBehaviour
         if (Object == null || !Object.IsValid) return;
 
         // Pozisyon smoothing - TÜM playerlar için (jitter önleme)
+        // Scale'e göre dinamik smooth time
         if (_positionInitialized)
         {
+            float safeStartScale = startScale > 0.01f ? startScale : 1f;
+            float scaleRatio = _displayScale / safeStartScale;
+            float dynamicSmoothTime = POSITION_SMOOTH_TIME * Mathf.Clamp(scaleRatio, 0.5f, 2f);
+
             _interpolatedPosition = Vector3.SmoothDamp(
                 _interpolatedPosition,
                 transform.position,
                 ref _positionVelocity,
-                POSITION_SMOOTH_TIME
+                dynamicSmoothTime
             );
         }
 
@@ -493,48 +520,83 @@ public class Player : NetworkBehaviour
     }
 
     /// <summary>
-    /// LateUpdate'te çağrılan kamera güncellemesi - daha smooth sonuç için
+    /// LateUpdate'te çağrılan kamera güncellemesi - çift katmanlı smoothing ile jitter önleme
     /// </summary>
     private void UpdateCameraLate()
     {
         if (cam == null) return;
 
-        // Smooth zoom
-        _currentCameraDistance = Mathf.Lerp(_currentCameraDistance, _targetCameraDistance, Time.deltaTime * zoomSmoothness);
+        // Scale faktörü hesapla
+        float safeStartScale = startScale > 0.01f ? startScale : 1f;
+        float scaleRatio = _displayScale / safeStartScale;
+        float scaleFactor = Mathf.Clamp(scaleRatio, 0.5f, 3f);
 
-        // INTERPOLATED pozisyon kullan (jitter önleme)
-        Vector3 targetPos = _interpolatedPosition + Vector3.up * cameraHeight;
+        // Dinamik değerler
+        float dynamicTargetDistance = _targetCameraDistance * scaleFactor;
+        float dynamicMinDistance = minCameraDistance * scaleFactor;
+        float dynamicMaxDistance = maxCameraDistance * scaleFactor;
+        dynamicTargetDistance = Mathf.Clamp(dynamicTargetDistance, dynamicMinDistance, dynamicMaxDistance);
+        float dynamicCameraHeight = cameraHeight * scaleFactor;
 
-        // Sadece ileri (W) giderken kamera karakterin arkasından baksın
-        // Smooth değer kullan (jitter önleme)
+        // ===== KATMAN 1: Hedef pozisyonu smooth et (network jitter absorbe) =====
+        Vector3 rawTargetPos = transform.position + Vector3.up * dynamicCameraHeight;
+
+        // İlk çağrıda başlat
+        if (!_cameraInitialized)
+        {
+            _cameraTargetPos = rawTargetPos;
+            _cameraInitialized = true;
+        }
+
+        // Hedef pozisyonu çift katmanlı smooth - önce interpolated, sonra camera target
+        // Bu network jitter'ı tamamen absorbe eder
+        float targetSmoothTime = CAMERA_TARGET_SMOOTH_TIME * scaleFactor;
+        _cameraTargetPos = Vector3.SmoothDamp(_cameraTargetPos, rawTargetPos, ref _cameraTargetVelocity, targetSmoothTime);
+
+        // ===== ZOOM SMOOTH =====
+        float zoomSmoothTime = 0.12f * scaleFactor;
+        _currentCameraDistance = Mathf.SmoothDamp(_currentCameraDistance, dynamicTargetDistance, ref _cameraDistanceVelocity, zoomSmoothTime);
+
+        // ===== YAW SMOOTH (ileri giderken) =====
         if (_smoothMovingForward > 0.5f)
         {
-            // INTERPOLATED model rotation kullan (jitter önleme)
             float modelYaw = _interpolatedModelRotation.eulerAngles.y;
-            // Yaw'ı karakterin arkasına yumuşak geçiş yap - smooth değere göre ağırlıklı
-            float lerpFactor = Time.deltaTime * cameraSmoothness * _smoothMovingForward;
+            float lerpFactor = Time.deltaTime * cameraSmoothness * _smoothMovingForward * 0.5f; // Daha yavaş
             _yaw = Mathf.LerpAngle(_yaw, modelYaw, lerpFactor);
         }
 
+        // Kamera yönü
         Quaternion rotation = Quaternion.Euler(_pitch, _yaw, 0);
         Vector3 direction = rotation * Vector3.forward;
 
-        // Kamera collision kontrolü
+        // ===== COLLISION =====
         float finalDistance = _currentCameraDistance;
+        float dynamicCollisionRadius = cameraCollisionRadius * scaleFactor;
 
-        // SphereCast ile engel kontrolü
-        if (Physics.SphereCast(targetPos, cameraCollisionRadius, -direction, out RaycastHit hit,
+        if (Physics.SphereCast(_cameraTargetPos, dynamicCollisionRadius, -direction, out RaycastHit hit,
             _currentCameraDistance, cameraCollisionLayers, QueryTriggerInteraction.Ignore))
         {
-            // Engel varsa kamerayı engelin önünde tut
-            finalDistance = Mathf.Max(hit.distance - cameraCollisionOffset, minCameraDistance * 0.5f);
+            float dynamicOffset = cameraCollisionOffset * scaleFactor;
+            float collisionDistance = Mathf.Max(hit.distance - dynamicOffset, dynamicMinDistance * 0.5f);
+            // Collision mesafesini de smooth et (ani geçişleri önle)
+            finalDistance = Mathf.Lerp(finalDistance, collisionDistance, Time.deltaTime * 15f);
         }
 
-        Vector3 desiredPos = targetPos - direction * finalDistance;
+        // Hedef kamera pozisyonu
+        Vector3 desiredCamPos = _cameraTargetPos - direction * finalDistance;
 
-        // Daha smooth kamera takibi
-        cam.transform.position = Vector3.SmoothDamp(cam.transform.position, desiredPos, ref _camVelocity, 0.05f);
-        cam.transform.LookAt(targetPos);
+        // ===== KATMAN 2: Kamera pozisyonunu smooth et =====
+        float camSmoothTime = CAMERA_POS_SMOOTH_TIME * scaleFactor;
+        cam.transform.position = Vector3.SmoothDamp(cam.transform.position, desiredCamPos, ref _cameraPosVelocity, camSmoothTime);
+
+        // ===== LOOKAT da smooth olmalı =====
+        // LookAt yerine smooth rotation kullan
+        Vector3 lookDirection = _cameraTargetPos - cam.transform.position;
+        if (lookDirection.sqrMagnitude > 0.001f)
+        {
+            Quaternion targetRotation = Quaternion.LookRotation(lookDirection);
+            cam.transform.rotation = Quaternion.Slerp(cam.transform.rotation, targetRotation, Time.deltaTime * 20f);
+        }
     }
 
     private bool HasParameter(Animator anim, string paramName)
@@ -844,13 +906,25 @@ public class Player : NetworkBehaviour
             // Aktif değilse toplama
             if (!droppedPickup.CanBeCollected()) return;
 
-            // Büyüme uygula (hız ve zıplama otomatik scale ile artar)
-            Grow(droppedPickup.growthAmount);
+            // NetworkObject'i al
+            if (!other.TryGetComponent<NetworkObject>(out var netObj)) return;
 
-            // Network üzerinden despawn
-            if (Runner != null && other.TryGetComponent<NetworkObject>(out var netObj))
+            // Büyüme uygula (hız ve zıplama otomatik scale ile artar)
+            float growth = droppedPickup.GrowthAmount;
+            Grow(growth);
+
+            // Network üzerinden despawn - Host ise direkt, client ise RPC
+            if (Runner != null)
             {
-                Runner.Despawn(netObj);
+                if (Object.HasStateAuthority)
+                {
+                    Runner.Despawn(netObj);
+                }
+                else
+                {
+                    // Client: RPC ile host'a despawn isteği gönder
+                    RPC_RequestDespawnPickup(netObj.Id);
+                }
             }
             return;
         }
@@ -864,7 +938,14 @@ public class Player : NetworkBehaviour
             // PowerUp objesini yok et (network üzerinden)
             if (Runner != null && other.TryGetComponent<NetworkObject>(out var netObj))
             {
-                Runner.Despawn(netObj);
+                if (Object.HasStateAuthority)
+                {
+                    Runner.Despawn(netObj);
+                }
+                else
+                {
+                    RPC_RequestDespawnPickup(netObj.Id);
+                }
             }
             else
             {
@@ -936,6 +1017,23 @@ public class Player : NetworkBehaviour
     {
         CurrentScale = Mathf.Clamp(CurrentScale + amount, minScale, maxScale);
         UpdateStatsBasedOnScale();
+    }
+
+    [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
+    public void RPC_RequestDespawnPickup(NetworkId pickupId)
+    {
+        // Host pickup'ı despawn eder
+        if (Runner == null) return;
+
+        if (Runner.TryFindObject(pickupId, out NetworkObject netObj))
+        {
+            Debug.Log($"[Player] RPC_RequestDespawnPickup: Despawning pickup {pickupId}");
+            Runner.Despawn(netObj);
+        }
+        else
+        {
+            Debug.LogWarning($"[Player] RPC_RequestDespawnPickup: Pickup {pickupId} not found!");
+        }
     }
 
     [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
