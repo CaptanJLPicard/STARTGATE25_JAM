@@ -1915,35 +1915,35 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 9057895442884542144, guid: 0be92ef22d01bea49a5f7e2b6e3c2274, type: 3}
       propertyPath: 'characterPrefabs.Array.data[0].RawGuidValue.Array.data[0]'
-      value: 3803120916228167324
+      value: 3799738268809100623
       objectReference: {fileID: 0}
     - target: {fileID: 9057895442884542144, guid: 0be92ef22d01bea49a5f7e2b6e3c2274, type: 3}
       propertyPath: 'characterPrefabs.Array.data[0].RawGuidValue.Array.data[1]'
-      value: -5920468128078233429
+      value: 7252248981443483979
       objectReference: {fileID: 0}
     - target: {fileID: 9057895442884542144, guid: 0be92ef22d01bea49a5f7e2b6e3c2274, type: 3}
       propertyPath: 'characterPrefabs.Array.data[1].RawGuidValue.Array.data[0]'
-      value: 3803120916228167324
+      value: -5419763970148120616
       objectReference: {fileID: 0}
     - target: {fileID: 9057895442884542144, guid: 0be92ef22d01bea49a5f7e2b6e3c2274, type: 3}
       propertyPath: 'characterPrefabs.Array.data[1].RawGuidValue.Array.data[1]'
-      value: -5920468128078233429
+      value: 3922239157794315162
       objectReference: {fileID: 0}
     - target: {fileID: 9057895442884542144, guid: 0be92ef22d01bea49a5f7e2b6e3c2274, type: 3}
       propertyPath: 'characterPrefabs.Array.data[2].RawGuidValue.Array.data[0]'
-      value: 3803120916228167324
+      value: -1979665172562940813
       objectReference: {fileID: 0}
     - target: {fileID: 9057895442884542144, guid: 0be92ef22d01bea49a5f7e2b6e3c2274, type: 3}
       propertyPath: 'characterPrefabs.Array.data[2].RawGuidValue.Array.data[1]'
-      value: -5920468128078233429
+      value: 5887168456368403819
       objectReference: {fileID: 0}
     - target: {fileID: 9057895442884542144, guid: 0be92ef22d01bea49a5f7e2b6e3c2274, type: 3}
       propertyPath: 'characterPrefabs.Array.data[3].RawGuidValue.Array.data[0]'
-      value: 3803120916228167324
+      value: -805373150989431540
       objectReference: {fileID: 0}
     - target: {fileID: 9057895442884542144, guid: 0be92ef22d01bea49a5f7e2b6e3c2274, type: 3}
       propertyPath: 'characterPrefabs.Array.data[3].RawGuidValue.Array.data[1]'
-      value: -5920468128078233429
+      value: 6457548780062434587
       objectReference: {fileID: 0}
     - target: {fileID: 9131606193860972953, guid: 0be92ef22d01bea49a5f7e2b6e3c2274, type: 3}
       propertyPath: m_Name
