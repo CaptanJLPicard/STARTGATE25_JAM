@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Fusion;
 using MoreMountains.Feedbacks;
 using UnityEngine;
@@ -13,37 +14,86 @@ public class LevelManager : NetworkBehaviour
     [SerializeField] private GameObject restartButton;
 
     public bool stop;
-    [SerializeField] private Transform spawnPosition;
+
+    [Header("Default Spawn (Checkpoint yoksa)")]
+    [SerializeField] private Transform defaultSpawn;
+
+    // Oyuncu -> en son checkpoint spawn noktası
+    private readonly Dictionary<PlayerRef, Transform> _playerCheckpoint = new();
 
     public override void Spawned()
     {
         if (fm == null)
             fm = FindFirstObjectByType<FusionManager>(FindObjectsInactive.Include);
 
-        // Restart butonu sadece host
         if (restartButton != null)
             restartButton.SetActive(HasStateAuthority);
+
+        // Default spawn boşsa tag ile bul
+        if (defaultSpawn == null)
+        {
+            var spawnObj = GameObject.FindWithTag("SpawnPoint");
+            if (spawnObj != null) defaultSpawn = spawnObj.transform;
+            else Debug.LogWarning("SpawnPoint tag'li obje bulunamadı! defaultSpawn atanmamış.");
+        }
     }
 
-    private void Awake()
+    // === CHECKPOINT KAYDI (Host) ===
+    public void ServerSetCheckpoint(Player player, Transform spawnPoint)
     {
-        var spawnObj = GameObject.FindWithTag("SpawnPoint");
-        if (spawnObj != null)
-            spawnPosition = spawnObj.transform;
-        else
-            Debug.LogWarning("SpawnPoint tag'li obje bulunamadı!");
+        if (!HasStateAuthority) return;
+        if (player == null || spawnPoint == null) return;
+        if (player.Object == null) return;
+
+        var pr = player.Object.InputAuthority;
+        _playerCheckpoint[pr] = spawnPoint;
+
+        // Debug.Log($"Checkpoint set: {pr} -> {spawnPoint.name}");
     }
 
+    // === RESPAWN (Host) ===
+    public void ServerRespawn(Player player)
+    {
+        if (!HasStateAuthority) return;
+        if (player == null || player.Object == null) return;
+
+        var pr = player.Object.InputAuthority;
+
+        Transform spawn = null;
+        if (!_playerCheckpoint.TryGetValue(pr, out spawn) || spawn == null)
+            spawn = defaultSpawn;
+
+        if (spawn == null)
+        {
+            Debug.LogWarning("Respawn yapılamadı: spawn null (defaultSpawn yok?)");
+            return;
+        }
+
+        // En sağlıklısı: NetworkCharacterController varsa Teleport
+        var ncc = player.GetComponent<NetworkCharacterController>();
+        if (ncc != null)
+        {
+            ncc.Teleport(spawn.position);
+        }
+        else
+        {
+            // fallback
+            player.transform.position = spawn.position;
+        }
+    }
+
+    // === ÖLÜM / TELEPORT TRIGGER ===
     private void OnTriggerEnter(Collider other)
     {
         if (!HasStateAuthority) return;
 
-        if (other.gameObject.CompareTag("Player") && currentScene > 0)
+        if (other.CompareTag("Player") && currentScene > 0)
         {
-            Player player = other.GetComponent<Player>();
+            var player = other.GetComponent<Player>();
             if (player != null)
             {
-                player.RPC_TeleportToInitialSpawn();
+                // Player RPC yok: direkt LevelManager respawn ediyor
+                ServerRespawn(player);
             }
         }
     }
@@ -58,25 +108,15 @@ public class LevelManager : NetworkBehaviour
     }
 
     // === MAIN MENU ===
-    public void MainMenuBtn()
-    {
-        // Herkes (client dahil) kendi tarafında çıkabilsin
-        ExecuteMainMenu();
-    }
+    public void MainMenuBtn() => ExecuteMainMenu();
 
     private void ExecuteMainMenu()
     {
         if (fm == null)
             fm = FindFirstObjectByType<FusionManager>(FindObjectsInactive.Include);
 
-        if (fm != null)
-        {
-            _ = fm.LeaveToMainMenuAsync();
-        }
-        else
-        {
-            Debug.LogWarning("FusionManager bulunamadı, odadan çıkılamadı!");
-        }
+        if (fm != null) _ = fm.LeaveToMainMenuAsync();
+        else Debug.LogWarning("FusionManager bulunamadı, odadan çıkılamadı!");
     }
 
     // === RESTART ===
