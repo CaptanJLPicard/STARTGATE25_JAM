@@ -1,6 +1,7 @@
 using Fusion;
 using System;
 using UnityEngine;
+using TMPro;
 
 public class Player : NetworkBehaviour
 {
@@ -8,6 +9,10 @@ public class Player : NetworkBehaviour
     [SerializeField] private NetworkCharacterController _cc;
     [SerializeField] private Transform playerModel;
     [SerializeField] private Animator animator;
+
+    [Header("Nickname Display")]
+    [SerializeField] private TextMeshPro nicknameText; // Player prefabına child olarak TextMeshPro 3D Text ekle ve buraya ata
+    [SerializeField] private Vector3 nicknameOffset = new Vector3(0f, 2.5f, 0f);
 
     [Header("Camera")]
     [SerializeField] private Camera cam;
@@ -42,6 +47,28 @@ public class Player : NetworkBehaviour
     [SerializeField] private float maxJumpVelocity = 10f; // Normalize için max yukarı hız
     [SerializeField] private float maxFallVelocity = 15f; // Normalize için max düşme hızı
 
+    [Header("Scale System")]
+    [SerializeField] private float shrinkDuration = 60f; // Tam küçülme süresi (saniye)
+    [SerializeField] private float minScale = 0.3f; // Minimum scale değeri
+    [SerializeField] private float maxScale = 2f; // Maximum scale değeri
+    [SerializeField] private float startScale = 1f; // Başlangıç scale değeri
+    [SerializeField] private float powerUpGrowthAmount = 0.2f; // PowerUp topladığında büyüme miktarı
+    [SerializeField] private float scaleSmoothness = 5f; // Scale geçiş yumuşaklığı
+    [SerializeField] private float sprintShrinkMultiplier = 2f; // Koşarken küçülme çarpanı
+
+    [Header("Scale Effects on Stats")]
+    [SerializeField] private float speedChangePerScale = 2f; // Scale değişimine göre hız değişimi
+    [SerializeField] private float jumpChangePerScale = 3f; // Scale değişimine göre zıplama değişimi
+
+    [Header("Dropped Pickup System")]
+    [SerializeField] private NetworkObject droppedPickupPrefab; // Spawn edilecek prefab (NetworkObject olarak)
+    [SerializeField] private float dropInterval = 0.5f; // Ne kadar sürede bir drop olacak
+    [SerializeField] private float droppedPickupLifetime = 10f; // Pickup'ın yaşam süresi
+    [SerializeField] private float droppedPickupActivationDelay = 0.3f; // Spawn sonrası aktif olma süresi
+    [SerializeField] private float droppedPickupGrowthAmount = 0.05f; // Toplandığında büyüme miktarı
+    [SerializeField] private float groundCheckDistance = 2f; // Zemin kontrolü mesafesi
+    [SerializeField] private LayerMask groundLayer = ~0; // Zemin layer'ı
+
     [Header("Momentum Effect - Rig References")]
     [SerializeField] private Transform headRig;
     [SerializeField] private Transform leftArmRig;
@@ -75,6 +102,7 @@ public class Player : NetworkBehaviour
     [Networked] public NetworkString<_16> Nick { get; set; }
     [Networked] public bool IsReady { get; set; }
     [Networked] public Vector3 RespawnPos { get; private set; }
+    [Networked] public float CurrentScale { get; set; }
 
     // Local
     private float _yaw, _pitch;
@@ -87,6 +115,17 @@ public class Player : NetworkBehaviour
     private float _currentAnimSpeed = 0f;
     private float _currentAirVertical = 0f;
     private bool _landingTriggered = false; // Landing animasyonu için
+
+    // Scale System - Local
+    private float _displayScale; // Görsel smooth scale
+    private float _baseMoveSpeed; // Başlangıç yürüme hızı
+    private float _baseSprintSpeed; // Başlangıç koşu hızı
+    private float _baseJumpForce; // Başlangıç zıplama gücü
+    private TickTimer _dropTimer; // Pickup drop zamanlayıcısı
+
+    // Nickname - Local
+    private Camera _mainCamera; // Billboard efekti için ana kamera
+    private string _lastNick; // Nick değişikliği kontrolü için
 
     // Momentum Effect - Local variables
     private Quaternion _headInitialRotation;
@@ -105,6 +144,16 @@ public class Player : NetworkBehaviour
     private Vector3 _smoothedVelocity;
     private Vector3 _lastPosition;
 
+    // Interpolation için
+    private Quaternion _interpolatedModelRotation;
+    private Vector3 _interpolatedPosition; // Pozisyon smoothing
+    private Vector3 _positionVelocity; // SmoothDamp için
+    private float _smoothMovingForward; // IsMovingForward için smooth değer
+    private bool _positionInitialized;
+    private const float ROTATION_INTERPOLATION_SPEED = 20f;
+    private const float POSITION_SMOOTH_TIME = 0.05f; // 50ms smoothing
+    private const float MOVEMENT_STATE_SMOOTHING = 12f;
+
     public override void Spawned()
     {
         if (_cc == null)
@@ -118,6 +167,22 @@ public class Player : NetworkBehaviour
 
         _model = playerModel != null ? playerModel : transform;
         ModelRotation = _model.rotation;
+        _interpolatedModelRotation = _model.rotation;
+        _interpolatedPosition = transform.position;
+        _positionInitialized = true;
+
+        // Scale System başlangıç değerleri
+        _baseMoveSpeed = moveSpeed;
+        _baseSprintSpeed = sprintSpeed;
+        _baseJumpForce = jumpForce;
+
+        // Sadece StateAuthority scale'i başlatır
+        if (Object.HasStateAuthority)
+        {
+            CurrentScale = startScale;
+        }
+        _displayScale = CurrentScale > 0 ? CurrentScale : startScale;
+        transform.localScale = Vector3.one * _displayScale;
 
         // Wiggle efekti için başlangıç rotasyonlarını kaydet
         InitializeWiggleSystem();
@@ -149,6 +214,21 @@ public class Player : NetworkBehaviour
                 cam.gameObject.SetActive(false);
             }
         }
+
+        // Nickname sistemi başlat
+        _mainCamera = Camera.main;
+
+        // Local player ise PlayerPrefs'ten nick'i oku ve set et
+        if (Object.HasInputAuthority)
+        {
+            string savedNick = PlayerPrefs.GetString("Nick", "");
+            if (!string.IsNullOrEmpty(savedNick))
+            {
+                RPC_SetNick(savedNick);
+            }
+        }
+
+        UpdateNicknameText();
     }
 
     public override void FixedUpdateNetwork()
@@ -223,18 +303,71 @@ public class Player : NetworkBehaviour
                 NetIsFalling = verticalVelocity < fallingThreshold;
             }
         }
+
+        // Scale System - Zamana bağlı küçülme
+        // InputAuthority: Kendi karakteri için scale güncellemesi ister
+        // StateAuthority: Scale'i gerçekten günceller
+        if (shrinkDuration > 0 && IsMoving)
+        {
+            float shrinkRate = (startScale - minScale) / shrinkDuration;
+
+            // Koşarken daha hızlı küçül
+            if (IsSprinting)
+            {
+                shrinkRate *= sprintShrinkMultiplier;
+            }
+
+            // StateAuthority scale'i günceller
+            if (Object.HasStateAuthority)
+            {
+                float newScale = CurrentScale - (shrinkRate * Runner.DeltaTime);
+                CurrentScale = Mathf.Clamp(newScale, minScale, maxScale);
+                UpdateStatsBasedOnScale();
+            }
+
+            // Pickup spawn - Her oyuncu kendi pickup'ını spawn edebilir
+            if (CurrentScale > minScale && droppedPickupPrefab != null)
+            {
+                if (_dropTimer.ExpiredOrNotRunning(Runner))
+                {
+                    // Host ise direkt spawn et, client ise RPC ile iste
+                    if (Object.HasStateAuthority)
+                    {
+                        SpawnDroppedPickup();
+                    }
+                    else
+                    {
+                        RPC_RequestSpawnPickup(transform.position, CurrentScale);
+                    }
+                    _dropTimer = TickTimer.CreateFromSeconds(Runner, dropInterval);
+                }
+            }
+        }
     }
 
     public override void Render()
     {
-        // Model rotasyonunu uygula (tum oyuncular icin)
+        // Scale System - Smooth scale geçişi (tüm oyuncular için)
+        if (CurrentScale > 0)
+        {
+            _displayScale = Mathf.Lerp(_displayScale, CurrentScale, Time.deltaTime * scaleSmoothness);
+            transform.localScale = Vector3.one * _displayScale;
+        }
+
+        // Model rotasyonunu INTERPOLATE ederek uygula (jitter önleme)
+        _interpolatedModelRotation = Quaternion.Slerp(
+            _interpolatedModelRotation,
+            ModelRotation,
+            Time.deltaTime * ROTATION_INTERPOLATION_SPEED
+        );
+
         if (_model != null && _model != transform)
         {
-            _model.rotation = ModelRotation;
+            _model.rotation = _interpolatedModelRotation;
         }
         else if (playerModel != null)
         {
-            playerModel.rotation = ModelRotation;
+            playerModel.rotation = _interpolatedModelRotation;
         }
 
         // Animasyon
@@ -246,6 +379,16 @@ public class Player : NetworkBehaviour
             float targetSpeed = IsMoving ? (IsSprinting ? 1f : 0.5f) : 0f;
             _currentAnimSpeed = Mathf.MoveTowards(_currentAnimSpeed, targetSpeed, Time.deltaTime * animationSmoothness);
             animator.SetFloat("Speed", _currentAnimSpeed);
+
+            // Animasyon hızını karakter hızına göre ayarla
+            float speedRatio = 1f;
+            if (_baseMoveSpeed > 0)
+            {
+                float currentSpeed = IsSprinting ? sprintSpeed : moveSpeed;
+                float baseSpeed = IsSprinting ? _baseSprintSpeed : _baseMoveSpeed;
+                speedRatio = currentSpeed / baseSpeed;
+            }
+            animator.speed = IsMoving ? speedRatio : 1f;
 
             if (HasParameter(animator, "IsGrounded"))
                 animator.SetBool("IsGrounded", isGrounded);
@@ -294,25 +437,47 @@ public class Player : NetworkBehaviour
         // Flag'leri her zaman sıfırla
         _wasGrounded = isGrounded;
 
-        // Kamera (sadece local player)
-        if (Object.HasInputAuthority)
-        {
-            UpdateCamera();
-        }
+        // Movement state smoothing (jitter önleme)
+        float targetMovingForward = IsMovingForward ? 1f : 0f;
+        _smoothMovingForward = Mathf.Lerp(_smoothMovingForward, targetMovingForward, Time.deltaTime * MOVEMENT_STATE_SMOOTHING);
+
+        // Nickname güncelle ve billboard efekti
+        UpdateNicknameDisplay();
     }
 
     private void LateUpdate()
     {
-        // Wiggle efekti Animator'dan SONRA uygulanmalı
-        // LateUpdate, Animator güncellemesinden sonra çalışır
-        if (Object != null && Object.IsValid)
+        if (Object == null || !Object.IsValid) return;
+
+        // Pozisyon smoothing - TÜM playerlar için (jitter önleme)
+        if (_positionInitialized)
         {
-            UpdateWiggleEffect();
+            _interpolatedPosition = Vector3.SmoothDamp(
+                _interpolatedPosition,
+                transform.position,
+                ref _positionVelocity,
+                POSITION_SMOOTH_TIME
+            );
         }
+
+        // Wiggle efekti Animator'dan SONRA uygulanmalı
+        UpdateWiggleEffect();
+
+        // Kamera güncellemesi LateUpdate'te (tüm transform güncellemelerinden sonra)
+        if (Object.HasInputAuthority)
+        {
+            UpdateCameraLate();
+        }
+
+        // Nickname billboard efekti - her frame kameraya baksın
+        UpdateNicknameBillboard();
     }
 
     private void Update()
     {
+        // Billboard efekti - TÜM playerlar için her frame çalışır
+        BillboardNickname();
+
         if (!Object || !Object.HasInputAuthority) return;
 
         _yaw += Input.GetAxisRaw("Mouse X") * mouseSensitivity;
@@ -327,22 +492,28 @@ public class Player : NetworkBehaviour
         }
     }
 
-    private void UpdateCamera()
+    /// <summary>
+    /// LateUpdate'te çağrılan kamera güncellemesi - daha smooth sonuç için
+    /// </summary>
+    private void UpdateCameraLate()
     {
         if (cam == null) return;
 
         // Smooth zoom
         _currentCameraDistance = Mathf.Lerp(_currentCameraDistance, _targetCameraDistance, Time.deltaTime * zoomSmoothness);
 
-        Vector3 targetPos = transform.position + Vector3.up * cameraHeight;
+        // INTERPOLATED pozisyon kullan (jitter önleme)
+        Vector3 targetPos = _interpolatedPosition + Vector3.up * cameraHeight;
 
         // Sadece ileri (W) giderken kamera karakterin arkasından baksın
-        if (IsMovingForward)
+        // Smooth değer kullan (jitter önleme)
+        if (_smoothMovingForward > 0.5f)
         {
-            // Karakterin baktığı yönü al
-            float modelYaw = ModelRotation.eulerAngles.y;
-            // Yaw'ı karakterin arkasına yumuşak geçiş yap
-            _yaw = Mathf.LerpAngle(_yaw, modelYaw, Time.deltaTime * cameraSmoothness);
+            // INTERPOLATED model rotation kullan (jitter önleme)
+            float modelYaw = _interpolatedModelRotation.eulerAngles.y;
+            // Yaw'ı karakterin arkasına yumuşak geçiş yap - smooth değere göre ağırlıklı
+            float lerpFactor = Time.deltaTime * cameraSmoothness * _smoothMovingForward;
+            _yaw = Mathf.LerpAngle(_yaw, modelYaw, lerpFactor);
         }
 
         Quaternion rotation = Quaternion.Euler(_pitch, _yaw, 0);
@@ -361,7 +532,8 @@ public class Player : NetworkBehaviour
 
         Vector3 desiredPos = targetPos - direction * finalDistance;
 
-        cam.transform.position = Vector3.SmoothDamp(cam.transform.position, desiredPos, ref _camVelocity, 1f / cameraSmoothness);
+        // Daha smooth kamera takibi
+        cam.transform.position = Vector3.SmoothDamp(cam.transform.position, desiredPos, ref _camVelocity, 0.05f);
         cam.transform.LookAt(targetPos);
     }
 
@@ -513,7 +685,302 @@ public class Player : NetworkBehaviour
 
     #endregion
 
+    #region NICKNAME SYSTEM
+
+    /// <summary>
+    /// Nickname text'ini günceller
+    /// </summary>
+    private void UpdateNicknameText()
+    {
+        if (nicknameText == null) return;
+
+        string currentNick = Nick.ToString();
+        if (string.IsNullOrEmpty(currentNick))
+        {
+            currentNick = $"Player {Object.InputAuthority.PlayerId}";
+        }
+
+        if (_lastNick != currentNick)
+        {
+            nicknameText.text = currentNick;
+            _lastNick = currentNick;
+        }
+    }
+
+    /// <summary>
+    /// Nickname pozisyonunu günceller
+    /// </summary>
+    private void UpdateNicknameDisplay()
+    {
+        // Text yoksa çık
+        if (nicknameText == null) return;
+
+        // Nick değişmişse güncelle
+        UpdateNicknameText();
+
+        // Doğrudan TextMeshPro transform'unu kullan
+        Transform textTransform = nicknameText.transform;
+
+        // Nickname pozisyonunu güncelle (scale'e göre offset ayarla)
+        // INTERPOLATED pozisyon kullan (jitter önleme)
+        float scaleMultiplier = CurrentScale > 0 ? CurrentScale : 1f;
+        Vector3 scaledOffset = nicknameOffset * scaleMultiplier;
+        Vector3 basePos = _positionInitialized ? _interpolatedPosition : transform.position;
+        textTransform.position = basePos + scaledOffset;
+    }
+
+    /// <summary>
+    /// Billboard efekti - LateUpdate'te çağrılır
+    /// </summary>
+    private void UpdateNicknameBillboard()
+    {
+        BillboardNickname();
+    }
+
+    /// <summary>
+    /// Nickname'i kameraya döndürür - Update'te çağrılır
+    /// </summary>
+    private void BillboardNickname()
+    {
+        if (nicknameText == null) return;
+
+        // Aktif kamerayı bul
+        Camera activeCam = GetActiveCamera();
+        if (activeCam == null) return;
+
+        // Text'in kameraya dönük olması için - kameradan uzağa baksın
+        Transform textTransform = nicknameText.transform;
+        Vector3 directionFromCamera = textTransform.position - activeCam.transform.position;
+        textTransform.rotation = Quaternion.LookRotation(directionFromCamera);
+    }
+
+    /// <summary>
+    /// Aktif kamerayı bulur (Camera.main yoksa diğer aktif kameraları arar)
+    /// </summary>
+    private Camera GetActiveCamera()
+    {
+        // Önce cached camera'yı kontrol et
+        if (_mainCamera != null && _mainCamera.isActiveAndEnabled)
+            return _mainCamera;
+
+        // Camera.main dene
+        Camera cam = Camera.main;
+        if (cam != null)
+        {
+            _mainCamera = cam;
+            return cam;
+        }
+
+        // MainCamera tag'i yoksa aktif kameraları ara
+        foreach (Camera c in Camera.allCameras)
+        {
+            if (c.isActiveAndEnabled)
+            {
+                _mainCamera = c;
+                return c;
+            }
+        }
+
+        return null;
+    }
+
+    #endregion
+
+    #region SCALE SYSTEM
+
+    /// <summary>
+    /// Scale değerine göre hız ve zıplama gücünü günceller
+    /// </summary>
+    private void UpdateStatsBasedOnScale()
+    {
+        if (_cc == null) return;
+
+        // Scale farkını hesapla (startScale'e göre)
+        float scaleDiff = CurrentScale - startScale;
+
+        // Hız ve zıplama değerlerini güncelle
+        moveSpeed = _baseMoveSpeed + (scaleDiff * speedChangePerScale);
+        sprintSpeed = _baseSprintSpeed + (scaleDiff * speedChangePerScale);
+        jumpForce = _baseJumpForce + (scaleDiff * jumpChangePerScale);
+
+        // Minimum değerlerin altına düşmesin
+        moveSpeed = Mathf.Max(moveSpeed, 1f);
+        sprintSpeed = Mathf.Max(sprintSpeed, 2f);
+        jumpForce = Mathf.Max(jumpForce, 3f);
+
+        // NetworkCharacterController'a uygula
+        _cc.jumpImpulse = jumpForce;
+    }
+
+    /// <summary>
+    /// Karakteri büyütür (PowerUp topladığında çağrılır)
+    /// </summary>
+    public void Grow(float amount)
+    {
+        if (Object.HasStateAuthority)
+        {
+            CurrentScale = Mathf.Clamp(CurrentScale + amount, minScale, maxScale);
+            UpdateStatsBasedOnScale();
+        }
+        else
+        {
+            // Client ise RPC ile StateAuthority'ye bildir
+            RPC_RequestGrow(amount);
+        }
+    }
+
+    /// <summary>
+    /// PowerUp ve DroppedPickup ile trigger collision
+    /// </summary>
+    private void OnTriggerEnter(Collider other)
+    {
+        // Sadece InputAuthority (local player) ve hareket ederken toplayabilir
+        if (!Object.HasInputAuthority) return;
+        if (!IsMoving) return;
+
+        // DroppedPickup kontrolü
+        if (other.TryGetComponent<DroppedPickup>(out var droppedPickup))
+        {
+            // Aktif değilse toplama
+            if (!droppedPickup.CanBeCollected()) return;
+
+            // Büyüme uygula (hız ve zıplama otomatik scale ile artar)
+            Grow(droppedPickup.growthAmount);
+
+            // Network üzerinden despawn
+            if (Runner != null && other.TryGetComponent<NetworkObject>(out var netObj))
+            {
+                Runner.Despawn(netObj);
+            }
+            return;
+        }
+
+        // Normal PowerUp kontrolü
+        if (other.CompareTag("PowerUp"))
+        {
+            // PowerUp'ı yok et ve büyü
+            Grow(powerUpGrowthAmount);
+
+            // PowerUp objesini yok et (network üzerinden)
+            if (Runner != null && other.TryGetComponent<NetworkObject>(out var netObj))
+            {
+                Runner.Despawn(netObj);
+            }
+            else
+            {
+                // Network objesi değilse normal destroy
+                Destroy(other.gameObject);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Scale'i sıfırlar (başlangıç değerine döndürür)
+    /// </summary>
+    public void ResetScale()
+    {
+        if (Object.HasStateAuthority)
+        {
+            CurrentScale = startScale;
+            UpdateStatsBasedOnScale();
+        }
+    }
+
+    /// <summary>
+    /// Zemine göre pickup spawn eder
+    /// </summary>
+    private void SpawnDroppedPickup()
+    {
+        if (!Object.HasStateAuthority || Runner == null) return;
+
+        // Zemin kontrolü - raycast ile normal bul
+        // Player scale'ine göre raycast origin ve mesafe ayarla
+        float scaledHeight = 0.5f * CurrentScale;
+        Vector3 rayOrigin = transform.position + Vector3.up * scaledHeight;
+
+        // Küçük player için daha uzun mesafe kullan
+        float dynamicCheckDistance = groundCheckDistance + (startScale - CurrentScale) * 3f;
+
+        if (Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, dynamicCheckDistance, groundLayer, QueryTriggerInteraction.Ignore))
+        {
+            // Spawn pozisyonu: tam zemin yüzeyinde
+            Vector3 spawnPos = hit.point;
+
+            // Spawn rotasyonu: zemin normaline göre
+            Quaternion spawnRot = Quaternion.FromToRotation(Vector3.up, hit.normal);
+
+            // Network üzerinden spawn
+            NetworkObject spawnedObj = Runner.Spawn(
+                droppedPickupPrefab,
+                spawnPos,
+                spawnRot,
+                Object.InputAuthority
+            );
+
+            // DroppedPickup ayarlarını yap
+            if (spawnedObj != null && spawnedObj.TryGetComponent<DroppedPickup>(out var pickup))
+            {
+                pickup.SetLifetime(droppedPickupLifetime);
+                pickup.SetGrowthAmount(droppedPickupGrowthAmount);
+                pickup.SetScaleMultiplier(CurrentScale); // Prefab'ın base scale'i korunur
+            }
+        }
+    }
+
+    #endregion
+
     #region RPC METHODS
+
+    [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
+    public void RPC_RequestGrow(float amount)
+    {
+        CurrentScale = Mathf.Clamp(CurrentScale + amount, minScale, maxScale);
+        UpdateStatsBasedOnScale();
+    }
+
+    [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
+    public void RPC_RequestSpawnPickup(Vector3 playerPosition, float playerScale)
+    {
+        Debug.Log($"[Player] RPC_RequestSpawnPickup received! Position: {playerPosition}, Scale: {playerScale}");
+
+        // StateAuthority (host) pickup'ı spawn eder
+        if (Runner == null || droppedPickupPrefab == null)
+        {
+            Debug.LogWarning("[Player] Runner null or prefab null!");
+            return;
+        }
+
+        // Zemin kontrolü - raycast ile normal bul
+        float scaledHeight = 0.5f * playerScale;
+        Vector3 rayOrigin = playerPosition + Vector3.up * scaledHeight;
+        float dynamicCheckDistance = groundCheckDistance + (startScale - playerScale) * 3f;
+
+        if (Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, dynamicCheckDistance, groundLayer, QueryTriggerInteraction.Ignore))
+        {
+            Vector3 spawnPos = hit.point;
+            Quaternion spawnRot = Quaternion.FromToRotation(Vector3.up, hit.normal);
+
+            NetworkObject spawnedObj = Runner.Spawn(
+                droppedPickupPrefab,
+                spawnPos,
+                spawnRot,
+                Object.InputAuthority
+            );
+
+            Debug.Log($"[Player] Pickup spawned: {(spawnedObj != null ? "SUCCESS" : "FAILED")}");
+
+            if (spawnedObj != null && spawnedObj.TryGetComponent<DroppedPickup>(out var pickup))
+            {
+                pickup.SetLifetime(droppedPickupLifetime);
+                pickup.SetGrowthAmount(droppedPickupGrowthAmount);
+                pickup.SetScaleMultiplier(playerScale);
+            }
+        }
+        else
+        {
+            Debug.LogWarning("[Player] Ground raycast failed!");
+        }
+    }
 
     [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
     public void RPC_SetRespawnPos(Vector3 pos)
@@ -526,6 +993,9 @@ public class Player : NetworkBehaviour
     public void RPC_TeleportToRespawn()
     {
         transform.position = RespawnPos;
+        // Interpolation değerlerini hemen güncelle
+        _interpolatedPosition = RespawnPos;
+        _positionVelocity = Vector3.zero;
     }
 
     [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
@@ -583,6 +1053,10 @@ public class Player : NetworkBehaviour
         {
             transform.position = targetPosition;
         }
+
+        // Interpolation değerlerini hemen güncelle (teleport sonrası jitter önleme)
+        _interpolatedPosition = targetPosition;
+        _positionVelocity = Vector3.zero;
 
         NetIsTouchingWall = false;
         NetIsJumping = false;
