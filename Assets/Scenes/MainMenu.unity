@@ -198,10 +198,10 @@ MonoBehaviour:
   currentMaxPlayers: 2
   buttonCountdown: 0
   characterSprite:
-  - {fileID: 21300002, guid: 358b5d9f23bc9413e87c9948acc67ee1, type: 3}
-  - {fileID: 21300012, guid: 358b5d9f23bc9413e87c9948acc67ee1, type: 3}
-  - {fileID: 21300004, guid: 358b5d9f23bc9413e87c9948acc67ee1, type: 3}
-  - {fileID: 21300008, guid: 358b5d9f23bc9413e87c9948acc67ee1, type: 3}
+  - {fileID: 21300000, guid: 545b133e5a462504499c60b7eaaadcb7, type: 3}
+  - {fileID: 21300000, guid: 5789e14007d8c214f8073079b1042bdc, type: 3}
+  - {fileID: 21300000, guid: fdc9526afc15f1d49bd6f43da6a2ef0b, type: 3}
+  - {fileID: 21300000, guid: 44428b32ea0e362468aefce58117d465, type: 3}
   characterImage: {fileID: 418238339}
 --- !u!1 &86528542
 GameObject:
@@ -469,7 +469,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_RaycastTarget: 1
+  m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
   m_OnCullStateChanged:
@@ -8369,7 +8369,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_RaycastTarget: 1
+  m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
   m_OnCullStateChanged:
@@ -11650,7 +11650,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
   m_Color: {r: 0, g: 0, b: 0, a: 0}
-  m_RaycastTarget: 1
+  m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
   m_OnCullStateChanged:
@@ -11750,7 +11750,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_RaycastTarget: 1
+  m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
   m_OnCullStateChanged:
@@ -13369,7 +13369,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Material: {fileID: 0}
   m_Color: {r: 1, g: 1, b: 1, a: 1}
-  m_RaycastTarget: 1
+  m_RaycastTarget: 0
   m_RaycastPadding: {x: 0, y: 0, z: 0, w: 0}
   m_Maskable: 1
   m_OnCullStateChanged:

@@ -54,6 +54,7 @@ public class FusionManager : MonoBehaviour, INetworkRunnerCallbacks
     private NetworkBool _isSprinting;
     private NetworkBool _isJumping;
     private NetworkBool _isFreeze;
+    private NetworkBool _isPunching;
 
     private Task _lobbyJoinTask;
     public bool LobbyReady { get; private set; }
@@ -487,6 +488,11 @@ public class FusionManager : MonoBehaviour, INetworkRunnerCallbacks
         _isJumping = Input.GetKey(KeyCode.Space);
         _isSprinting = Input.GetKey(KeyCode.LeftShift);
         _isFreeze = Input.GetKey(KeyCode.Q);
+
+        // Sol tık - buffer sistemi ile hassas algılama
+        // GetMouseButtonDown sadece o frame true döner, OnInput'a kadar tutulması lazım
+        if (Input.GetMouseButtonDown(0))
+            _isPunching = true;
     }
 
     public void OnInput(NetworkRunner runner, NetworkInput input)
@@ -515,6 +521,8 @@ public class FusionManager : MonoBehaviour, INetworkRunnerCallbacks
         data.isJumping = _isJumping;
         data.isSprinting = _isSprinting;
         data.isFreeze = _isFreeze;
+        data.isPunching = _isPunching;
+        _isPunching = false; // GetKeyDown kullandığımız için reset
 
         input.Set(data);
     }

@@ -2743,7 +2743,7 @@ GameObject:
   - component: {fileID: 220400695568966656}
   - component: {fileID: 6608850364731485304}
   - component: {fileID: 4636969658045197433}
-  m_Layer: 6
+  m_Layer: 8
   m_Name: BoberPlayer
   m_TagString: Player
   m_Icon: {fileID: 0}
@@ -2795,7 +2795,7 @@ MonoBehaviour:
   mouseSensitivity: 3
   minPitch: -80
   maxPitch: 80
-  minCameraDistance: 2
+  minCameraDistance: 3
   maxCameraDistance: 10
   zoomSpeed: 3
   zoomSmoothness: 8
@@ -2813,20 +2813,20 @@ MonoBehaviour:
   airAnimationSmoothness: 6
   maxJumpVelocity: 10
   maxFallVelocity: 15
-  shrinkDuration: 60
-  minScale: 0.3
+  shrinkDuration: 5
+  minScale: 0.8
   maxScale: 2
   startScale: 1
-  powerUpGrowthAmount: 0.2
+  powerUpGrowthAmount: 0.1
   scaleSmoothness: 5
   sprintShrinkMultiplier: 2
-  speedChangePerScale: 2
-  jumpChangePerScale: 3
+  speedChangePerScale: 5
+  jumpChangePerScale: 2
   droppedPickupPrefab: {fileID: 4746741609651572505, guid: b5312ccb081f00240b6a2bf17cc9770d, type: 3}
-  dropInterval: 0.5
+  dropInterval: 1
   droppedPickupLifetime: 10
-  droppedPickupActivationDelay: 0.3
-  droppedPickupGrowthAmount: 0.05
+  droppedPickupActivationDelay: 0.5
+  droppedPickupGrowthAmount: 0.1
   groundCheckDistance: 2
   groundLayer:
     serializedVersion: 2
@@ -2843,6 +2843,27 @@ MonoBehaviour:
   armAxisX: 0
   armAxisY: 1
   armAxisZ: 0
+  punchRange: 3
+  punchRadius: 0.5
+  punchCooldown: 0.5
+  punchKnockbackDuration: 0.4
+  punchTargetLayers:
+    serializedVersion: 2
+    m_Bits: 4294967295
+  punchOriginOffset: {x: 0, y: 0.8, z: 0}
+  knockbackUpwardForce: 5
+  knockbackPushForce: 25
+  knockbackDecay: 4
+  showPunchGizmos: 1
+  gizmoRangeColor: {r: 1, g: 0.5, b: 0, a: 0.3}
+  gizmoRayColor: {r: 1, g: 0, b: 0, a: 1}
+  gizmoHitColor: {r: 0, g: 1, b: 0, a: 1}
+  playerCollisionRadius: 0.8
+  playerLayer:
+    serializedVersion: 2
+    m_Bits: 256
+  antiStackingForce: 25
+  minPlayerDistance: 0.6
   _NetVelocity: {x: 0, y: 0, z: 0}
   _NetIsTouchingWall:
     _value: 0

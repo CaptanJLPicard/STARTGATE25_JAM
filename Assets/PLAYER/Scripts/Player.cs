@@ -87,6 +87,31 @@ public class Player : NetworkBehaviour
     [SerializeField] private bool armAxisY = false;  // Yaw (sağa/sola dönme)
     [SerializeField] private bool armAxisZ = true;   // Roll (yana yatma)
 
+    [Header("Punch System")]
+    [SerializeField] private float punchRange = 3f;              // Punch menzili
+    [SerializeField] private float punchRadius = 0.5f;           // SphereCast yarıçapı (hassasiyet)
+    [SerializeField] private float punchCooldown = 0.5f;         // Punch cooldown süresi
+    [SerializeField] private float punchKnockbackDuration = 0.3f;// Knockback süresi
+    [SerializeField] private LayerMask punchTargetLayers = ~0;   // Hedef layer'ları
+    [SerializeField] private Vector3 punchOriginOffset = new Vector3(0f, 0.8f, 0f); // Punch başlangıç noktası offset
+
+    [Header("Punch Knockback Settings")]
+    [SerializeField] private float knockbackUpwardForce = 8f;        // Yukarı fırlatma gücü (Inspector'dan ayarla)
+    [SerializeField] private float knockbackPushForce = 12f;         // Geri itme gücü (Inspector'dan ayarla)
+    [SerializeField] private float knockbackDecay = 6f;              // Yavaşlama hızı (düşük = uzun kayma)
+
+    [Header("Punch Gizmos")]
+    [SerializeField] private bool showPunchGizmos = true;        // Gizmos göster/gizle
+    [SerializeField] private Color gizmoRangeColor = new Color(1f, 0.5f, 0f, 0.3f);  // Menzil rengi
+    [SerializeField] private Color gizmoRayColor = Color.red;    // Ray rengi
+    [SerializeField] private Color gizmoHitColor = Color.green;  // Hit rengi
+
+    [Header("Player Collision System")]
+    [SerializeField] private float playerCollisionRadius = 0.8f;  // Collision algılama yarıçapı
+    [SerializeField] private LayerMask playerLayer;               // Player layer'ı (Inspector'dan ayarla)
+    [SerializeField] private float antiStackingForce = 25f;       // Üst üste binmeyi engelleme gücü
+    [SerializeField] private float minPlayerDistance = 0.6f;      // Minimum oyuncu mesafesi
+
     // Network synced
     [Networked] private float Yaw { get; set; }
     [Networked] private float Pitch { get; set; }
@@ -103,6 +128,17 @@ public class Player : NetworkBehaviour
     [Networked] public bool IsReady { get; set; }
     [Networked] public Vector3 RespawnPos { get; private set; }
     [Networked] public float CurrentScale { get; set; }
+    [Networked] public NetworkBool MovementLocked { get; set; }
+
+    // Punch System - Networked
+    [Networked] private NetworkBool IsBeingKnockedBack { get; set; }
+    [Networked] private Vector3 KnockbackDirection { get; set; }
+    [Networked] private float KnockbackStartTime { get; set; }
+    [Networked] private float KnockbackForceMultiplier { get; set; } // Scale bazlı güç çarpanı
+    [Networked] private TickTimer PunchCooldownTimer { get; set; }
+
+    // Anti-Launch System - Collision kaynaklı yukarı fırlamayı engeller
+    [Networked] private NetworkBool DidJump { get; set; } // Gerçekten zıpladı mı (space basıldı)
 
     // Local
     private float _yaw, _pitch;
@@ -167,6 +203,13 @@ public class Player : NetworkBehaviour
     private const float CAMERA_TARGET_SMOOTH_TIME = 0.08f; // Hedef smooth süresi
     private const float CAMERA_POS_SMOOTH_TIME = 0.06f; // Kamera pozisyon smooth süresi
 
+    // Kamera Collision - kalıcı değişkenler
+    private float _cameraCollisionDistance; // Collision sonrası mesafe
+    private float _cameraCollisionVelocity; // Collision smooth velocity
+
+    // Punch System - Local
+    private bool _punchAnimTriggered;             // Punch animasyonu tetiklendi mi
+
     public override void Spawned()
     {
         if (_cc == null)
@@ -206,6 +249,7 @@ public class Player : NetworkBehaviour
             _pitch = 20f;
             _targetCameraDistance = cameraDistance;
             _currentCameraDistance = cameraDistance;
+            _cameraCollisionDistance = cameraDistance; // Collision mesafesi başlangıç
 
             if (cam == null)
                 cam = Camera.main;
@@ -296,13 +340,14 @@ public class Player : NetworkBehaviour
                 _cc.Move(Vector3.zero);
             }
 
-            // Ziplama
-            if (input.isJumping && _cc.Grounded)
+            // Ziplama - Başka oyuncunun üstündeyken ASLA zıplayamaz
+            bool canJump = _cc.Grounded && !IsStandingOnPlayer();
+            if (input.isJumping && canJump)
             {
                 _cc.Jump();
                 NetIsJumping = true;
+                DidJump = true; // GERÇEK zıplama yapıldı
                 _jumpTriggered = true; // Animasyon için flag
-                Debug.Log($"[JUMP] Ziplama yapildi! _jumpTriggered = {_jumpTriggered}");
             }
 
             // Zıplama ve düşme durumlarını güncelle
@@ -313,11 +358,20 @@ public class Player : NetworkBehaviour
             {
                 NetIsJumping = false;
                 NetIsFalling = false;
+                DidJump = false; // Yere indi, zıplama flag'ini sıfırla
             }
             else
             {
                 // Havadayken: düşüyor mu kontrol et
                 NetIsFalling = verticalVelocity < fallingThreshold;
+            }
+
+            // Punch System - E tuşuna basıldığında
+            if (input.isPunching && PunchCooldownTimer.ExpiredOrNotRunning(Runner))
+            {
+                TryPunch();
+                PunchCooldownTimer = TickTimer.CreateFromSeconds(Runner, punchCooldown);
+                _punchAnimTriggered = true;
             }
 
             // Scale System - Zamana bağlı küçülme (GetInput içinde - input olan oyuncu için)
@@ -339,23 +393,81 @@ public class Player : NetworkBehaviour
                     UpdateStatsBasedOnScale();
                 }
 
-                // Pickup spawn - Input alan oyuncu için (kendi karakteri)
-                if (droppedPickupPrefab != null)
+                // Pickup spawn - SADECE forward simulation'da (resimulation'da çift spawn önleme)
+                // Runner.IsForward: true = gerçek simulation, false = resimulation (geçmişi tekrar hesaplama)
+                if (droppedPickupPrefab != null && Runner.IsForward)
                 {
                     if (_dropTimer.ExpiredOrNotRunning(Runner))
                     {
-                        // Host ise direkt spawn et, client ise RPC ile iste
+                        // SADECE StateAuthority (Host) spawn yapar
+                        // Client hiç spawn yapmaz, sadece host kendi inputuyla spawn eder
                         if (Object.HasStateAuthority)
                         {
                             SpawnDroppedPickup();
+                            _dropTimer = TickTimer.CreateFromSeconds(Runner, dropInterval);
                         }
-                        else
-                        {
-                            // Client: RPC ile host'a spawn isteği gönder
-                            RPC_RequestSpawnPickup(transform.position, CurrentScale);
-                        }
-                        _dropTimer = TickTimer.CreateFromSeconds(Runner, dropInterval);
                     }
+                }
+            }
+        }
+
+        // Knockback uygulama - tüm ticklerde çalışır (GetInput dışında)
+        if (IsBeingKnockedBack && Object.HasStateAuthority)
+        {
+            float elapsed = (Runner.SimulationTime - KnockbackStartTime);
+            if (elapsed < punchKnockbackDuration)
+            {
+                // Scale çarpanı (büyük oyuncu küçüğü daha sert vurur)
+                float forceMultiplier = Mathf.Max(KnockbackForceMultiplier, 1f);
+
+                // Decay faktörü - zamanla azalan kuvvet
+                float decayFactor = Mathf.Exp(-knockbackDecay * elapsed);
+
+                // Yatay knockback yönü (Y=0)
+                Vector3 horizontalDir = new Vector3(KnockbackDirection.x, 0f, KnockbackDirection.z).normalized;
+
+                // Velocity hesapla
+                Vector3 currentVel = _cc.Velocity;
+
+                // Yatay geri itme (vuruş yönünde) - scale çarpanı ile
+                float pushForce = knockbackPushForce * forceMultiplier * decayFactor;
+                currentVel.x = horizontalDir.x * pushForce;
+                currentVel.z = horizontalDir.z * pushForce;
+
+                // Yukarı fırlatma (sadece başlangıçta, sonra yerçekimi devralır) - scale çarpanı ile
+                if (elapsed < 0.05f)
+                {
+                    currentVel.y = knockbackUpwardForce * forceMultiplier;
+                }
+
+                _cc.Velocity = currentVel;
+            }
+            else
+            {
+                IsBeingKnockedBack = false;
+            }
+        }
+
+        // Anti-Stacking System - Oyuncuların birbirlerinin üzerine çıkmasını KESİNLİKLE engeller
+        if (Object.HasStateAuthority)
+        {
+            EnforcePlayerSeparation();
+
+            // === ANTI-LAUNCH SYSTEM ===
+            // Space basılmadan yukarı fırlama ASLA olmaz
+            // Collision kaynaklı yukarı velocity'yi engelle
+            if (!DidJump && !IsBeingKnockedBack && _cc != null)
+            {
+                float currentYVelocity = _cc.Velocity.y;
+
+                // Eğer zıplama yapılmadı AMA yukarı doğru hareket var
+                // ve başka bir oyuncuya yakınız
+                if (currentYVelocity > 0.5f && IsNearOtherPlayer())
+                {
+                    // Yukarı velocity'yi SIFIRLA - collision kaynaklı fırlama
+                    Vector3 vel = _cc.Velocity;
+                    vel.y = Mathf.Min(vel.y, 0f); // Yukarı hareket yok, sadece aşağı veya sıfır
+                    _cc.Velocity = vel;
                 }
             }
         }
@@ -453,6 +565,13 @@ public class Player : NetworkBehaviour
             {
                 animator.SetTrigger("Land");
                 _landingTriggered = false;
+            }
+
+            // Punch animasyonu
+            if (_punchAnimTriggered && HasParameter(animator, "Punch"))
+            {
+                animator.SetTrigger("Punch");
+                _punchAnimTriggered = false;
             }
         }
 
@@ -569,18 +688,36 @@ public class Player : NetworkBehaviour
         Quaternion rotation = Quaternion.Euler(_pitch, _yaw, 0);
         Vector3 direction = rotation * Vector3.forward;
 
-        // ===== COLLISION =====
-        float finalDistance = _currentCameraDistance;
+        // ===== COLLISION - Geliştirilmiş Sistem =====
         float dynamicCollisionRadius = cameraCollisionRadius * scaleFactor;
+        float dynamicOffset = cameraCollisionOffset * scaleFactor;
+        float targetCollisionDistance = _currentCameraDistance; // Varsayılan: collision yok
 
+        // SphereCast ile duvar kontrolü
         if (Physics.SphereCast(_cameraTargetPos, dynamicCollisionRadius, -direction, out RaycastHit hit,
+            _currentCameraDistance + dynamicCollisionRadius, cameraCollisionLayers, QueryTriggerInteraction.Ignore))
+        {
+            // Collision var - mesafeyi hesapla
+            float collisionDist = Mathf.Max(hit.distance - dynamicOffset, dynamicMinDistance * 0.3f);
+            targetCollisionDistance = collisionDist;
+        }
+
+        // Raycast ile de kontrol (SphereCast kaçırabilir)
+        if (Physics.Raycast(_cameraTargetPos, -direction, out RaycastHit rayHit,
             _currentCameraDistance, cameraCollisionLayers, QueryTriggerInteraction.Ignore))
         {
-            float dynamicOffset = cameraCollisionOffset * scaleFactor;
-            float collisionDistance = Mathf.Max(hit.distance - dynamicOffset, dynamicMinDistance * 0.5f);
-            // Collision mesafesini de smooth et (ani geçişleri önle)
-            finalDistance = Mathf.Lerp(finalDistance, collisionDistance, Time.deltaTime * 15f);
+            float rayCollisionDist = Mathf.Max(rayHit.distance - dynamicOffset, dynamicMinDistance * 0.3f);
+            // En yakın collision'ı kullan
+            targetCollisionDistance = Mathf.Min(targetCollisionDistance, rayCollisionDist);
         }
+
+        // Collision mesafesini smooth et
+        // Duvara yaklaşırken HIZLI, uzaklaşırken yavaş
+        float collisionSpeed = targetCollisionDistance < _cameraCollisionDistance ? 25f : 8f;
+        _cameraCollisionDistance = Mathf.Lerp(_cameraCollisionDistance, targetCollisionDistance, Time.deltaTime * collisionSpeed);
+
+        // Final mesafe: collision mesafesi ile hedef mesafenin minimumu
+        float finalDistance = Mathf.Min(_currentCameraDistance, _cameraCollisionDistance);
 
         // Hedef kamera pozisyonu
         Vector3 desiredCamPos = _cameraTargetPos - direction * finalDistance;
@@ -848,6 +985,242 @@ public class Player : NetworkBehaviour
 
     #endregion
 
+    #region PLAYER COLLISION SYSTEM
+
+    /// <summary>
+    /// Oyuncuların birbirlerinin üzerine çıkmasını KESİNLİKLE engeller.
+    /// Bu sistem itme YAPMAZ - sadece üst üste binmeyi engeller.
+    /// Üstteki oyuncu AŞAĞI ve YANA zorlanır, ASLA yukarı kaldırılmaz.
+    /// </summary>
+    private void EnforcePlayerSeparation()
+    {
+        if (_cc == null) return;
+
+        float myScale = Mathf.Max(CurrentScale, 0.1f);
+        float dynamicRadius = playerCollisionRadius * Mathf.Max(myScale, 0.5f);
+        float dynamicMinDistance = minPlayerDistance * Mathf.Max(myScale, 0.5f);
+
+        // Çevredeki oyuncuları bul
+        Collider[] nearbyColliders = Physics.OverlapSphere(transform.position, dynamicRadius * 2f, playerLayer, QueryTriggerInteraction.Ignore);
+
+        foreach (Collider col in nearbyColliders)
+        {
+            // Kendi collider'ımızı atla
+            if (col.transform == transform || col.transform.IsChildOf(transform)) continue;
+
+            Player otherPlayer = col.GetComponentInParent<Player>();
+            if (otherPlayer == null || otherPlayer == this) continue;
+
+            Vector3 myPos = transform.position;
+            Vector3 otherPos = otherPlayer.transform.position;
+
+            // Yatay mesafe (XZ düzlemi)
+            Vector3 horizontalDiff = new Vector3(otherPos.x - myPos.x, 0f, otherPos.z - myPos.z);
+            float horizontalDistance = horizontalDiff.magnitude;
+
+            // Dikey fark
+            float verticalDiff = otherPos.y - myPos.y;
+
+            // === ÜST ÜSTE BİNME KONTROLÜ ===
+            // Eğer BİZ diğer oyuncunun ÜSTÜNDEYSEK ve çok yakınsak
+            if (verticalDiff < -0.2f && horizontalDistance < dynamicMinDistance * 1.5f)
+            {
+                // Biz üstteyiz - KENDİMİZİ aşağı ve yana zorla
+                Vector3 escapeDir;
+
+                if (horizontalDistance > 0.01f)
+                {
+                    // Yatay mesafe varsa, o yönde kaç
+                    escapeDir = horizontalDiff.normalized;
+                }
+                else
+                {
+                    // Tam üstündeyiz - rastgele yön seç
+                    float angle = (Object.InputAuthority.PlayerId * 137.5f) % 360f; // Deterministik "rastgele"
+                    escapeDir = new Vector3(Mathf.Cos(angle * Mathf.Deg2Rad), 0f, Mathf.Sin(angle * Mathf.Deg2Rad));
+                }
+
+                // Aşağı doğru kuvvet ekle (yerçekimi gibi ama daha güçlü)
+                escapeDir.y = -1f;
+                escapeDir = escapeDir.normalized;
+
+                // Kuvvet - ne kadar yakınsak o kadar güçlü
+                float overlapAmount = dynamicMinDistance - horizontalDistance;
+                float forceMagnitude = Mathf.Max(overlapAmount, 0.1f) * antiStackingForce;
+
+                Vector3 separationMove = escapeDir * forceMagnitude * Runner.DeltaTime;
+                _cc.Move(separationMove);
+            }
+
+            // === YATAY OVERLAP KONTROLÜ (İtme değil, sadece ayrılma) ===
+            // Eğer aynı yükseklikte ve çok yakınsak
+            if (Mathf.Abs(verticalDiff) < 1f && horizontalDistance < dynamicMinDistance)
+            {
+                // Her iki oyuncu da birbirinden uzaklaşır (eşit)
+                Vector3 separationDir;
+
+                if (horizontalDistance > 0.01f)
+                {
+                    // Diğer oyuncudan UZAĞA
+                    separationDir = -horizontalDiff.normalized;
+                }
+                else
+                {
+                    // Üst üste - deterministik yön
+                    float angle = (Object.InputAuthority.PlayerId * 137.5f) % 360f;
+                    separationDir = new Vector3(Mathf.Cos(angle * Mathf.Deg2Rad), 0f, Mathf.Sin(angle * Mathf.Deg2Rad));
+                }
+
+                // ASLA yukarı kaldırma
+                separationDir.y = 0f;
+
+                float overlapAmount = dynamicMinDistance - horizontalDistance;
+                float forceMagnitude = overlapAmount * antiStackingForce * 0.5f; // Yatay için daha az kuvvet
+
+                Vector3 separationMove = separationDir * forceMagnitude * Runner.DeltaTime;
+                _cc.Move(separationMove);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Başka bir oyuncuya yakın mı kontrol eder (collision kaynaklı fırlama kontrolü için)
+    /// </summary>
+    private bool IsNearOtherPlayer()
+    {
+        float myScale = Mathf.Max(CurrentScale, 0.1f);
+        float checkRadius = playerCollisionRadius * myScale * 1.5f; // Biraz daha geniş alan
+
+        Collider[] nearbyColliders = Physics.OverlapSphere(transform.position, checkRadius, playerLayer, QueryTriggerInteraction.Ignore);
+
+        foreach (Collider col in nearbyColliders)
+        {
+            if (col.transform == transform || col.transform.IsChildOf(transform)) continue;
+
+            Player otherPlayer = col.GetComponentInParent<Player>();
+            if (otherPlayer != null && otherPlayer != this)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Başka bir oyuncunun üstünde mi kontrol eder
+    /// </summary>
+    public bool IsStandingOnPlayer()
+    {
+        float myScale = Mathf.Max(CurrentScale, 0.1f);
+        float checkRadius = playerCollisionRadius * myScale;
+
+        // Ayakların altını kontrol et
+        Vector3 checkOrigin = transform.position + Vector3.up * 0.1f;
+
+        Collider[] belowColliders = Physics.OverlapSphere(checkOrigin + Vector3.down * 0.3f, checkRadius, playerLayer, QueryTriggerInteraction.Ignore);
+
+        foreach (Collider col in belowColliders)
+        {
+            if (col.transform == transform || col.transform.IsChildOf(transform)) continue;
+
+            Player otherPlayer = col.GetComponentInParent<Player>();
+            if (otherPlayer != null && otherPlayer != this)
+            {
+                // Diğer oyuncunun üstündeyiz
+                float heightDiff = transform.position.y - otherPlayer.transform.position.y;
+                if (heightDiff > 0.2f)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    #endregion
+
+    #region PUNCH SYSTEM
+
+    /// <summary>
+    /// Önündeki oyuncuya punch atmayı dener - SphereCast ile hassas algılama
+    /// </summary>
+    private void TryPunch()
+    {
+        if (_model == null) return;
+
+        // Model'in baktığı yön
+        Vector3 punchDirection = _model.forward;
+        Vector3 punchOrigin = transform.position + _model.TransformDirection(punchOriginOffset);
+
+        // SphereCast ile direkt bakış yönünde algılama (çok daha hassas)
+        if (Physics.SphereCast(punchOrigin, punchRadius, punchDirection, out RaycastHit hit, punchRange, punchTargetLayers, QueryTriggerInteraction.Ignore))
+        {
+            // Kendi collider'ımız mı?
+            if (hit.transform == transform || hit.transform.IsChildOf(transform)) return;
+
+            // Player bileşeni var mı?
+            Player targetPlayer = hit.collider.GetComponentInParent<Player>();
+            if (targetPlayer == null || targetPlayer == this) return;
+
+            // === PUNCH KNOCKBACK ===
+
+            // Vuruş yönü (yatay)
+            Vector3 hitDirection = (targetPlayer.transform.position - transform.position);
+            hitDirection.y = 0;
+            hitDirection = hitDirection.normalized;
+
+            // Kendi scale'ine göre vuruş gücü
+            // Büyüksen (scale > startScale) = daha güçlü vurursun
+            // Küçüksen (scale < startScale) = daha zayıf vurursun
+            float safeStartScale = startScale > 0.1f ? startScale : 1f;
+            float scaleMultiplier = CurrentScale / safeStartScale;
+            scaleMultiplier = Mathf.Clamp(scaleMultiplier, 0.3f, 3f); // Min 0.3x, Max 3x
+
+            // Knockback yönü
+            Vector3 knockbackDir = hitDirection;
+
+            // Host ise direkt uygula, client ise RPC ile
+            if (Object.HasStateAuthority)
+            {
+                targetPlayer.ApplyCartoonKnockback(knockbackDir, scaleMultiplier, scaleMultiplier);
+            }
+            else
+            {
+                RPC_RequestCartoonPunch(targetPlayer.Object.Id, knockbackDir, scaleMultiplier, scaleMultiplier);
+            }
+
+            Debug.Log($"[PUNCH] {Nick} -> {targetPlayer.Nick} Scale: {CurrentScale:F2} -> Güç: {scaleMultiplier:F1}x");
+        }
+    }
+
+    /// <summary>
+    /// Knockback uygular - force ve intensity scale'e göre ayarlanır
+    /// </summary>
+    public void ApplyCartoonKnockback(Vector3 direction, float force, float intensity)
+    {
+        if (!Object.HasStateAuthority) return;
+
+        IsBeingKnockedBack = true;
+        KnockbackDirection = direction;
+        KnockbackStartTime = Runner.SimulationTime;
+        KnockbackForceMultiplier = intensity; // Scale çarpanını kaydet
+
+        // Tüm client'lara bildir
+        RPC_OnCartoonKnockbackReceived(direction, force, intensity);
+    }
+
+    /// <summary>
+    /// Eski knockback metodu - geriye uyumluluk için
+    /// </summary>
+    public void ApplyKnockback(Vector3 direction)
+    {
+        ApplyCartoonKnockback(direction, 1f, 1f);
+    }
+
+    #endregion
+
     #region SCALE SYSTEM
 
     /// <summary>
@@ -972,45 +1345,158 @@ public class Player : NetworkBehaviour
     /// </summary>
     private void SpawnDroppedPickup()
     {
-        if (!Object.HasStateAuthority || Runner == null) return;
+        if (!Object.HasStateAuthority || Runner == null || droppedPickupPrefab == null) return;
 
-        // Zemin kontrolü - raycast ile normal bul
-        // Player scale'ine göre raycast origin ve mesafe ayarla
-        float scaledHeight = 0.5f * CurrentScale;
-        Vector3 rayOrigin = transform.position + Vector3.up * scaledHeight;
+        float scale = Mathf.Max(CurrentScale, 0.01f);
 
-        // Küçük player için daha uzun mesafe kullan
-        float dynamicCheckDistance = groundCheckDistance + (startScale - CurrentScale) * 3f;
+        // Origin: scale büyüdükçe daha yukarıdan at
+        float originHeight = Mathf.Max(0.5f * scale, 0.5f);
+        Vector3 rayOrigin = transform.position + Vector3.up * originHeight;
+
+        // Ray uzunluğu: origin yüksekliği + ekstra (büyüdükçe ray da uzasın)
+        float extra = 2.0f;
+        float dynamicCheckDistance = originHeight + groundCheckDistance + extra;
+
+        // Güvenlik clamp (asla 0/negatif olmasın)
+        dynamicCheckDistance = Mathf.Clamp(dynamicCheckDistance, 1f, 200f);
 
         if (Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, dynamicCheckDistance, groundLayer, QueryTriggerInteraction.Ignore))
         {
-            // Spawn pozisyonu: tam zemin yüzeyinde
             Vector3 spawnPos = hit.point;
-
-            // Spawn rotasyonu: zemin normaline göre
             Quaternion spawnRot = Quaternion.FromToRotation(Vector3.up, hit.normal);
 
-            // Network üzerinden spawn
-            NetworkObject spawnedObj = Runner.Spawn(
-                droppedPickupPrefab,
-                spawnPos,
-                spawnRot,
-                Object.InputAuthority
-            );
+            NetworkObject spawnedObj = Runner.Spawn(droppedPickupPrefab, spawnPos, spawnRot, Object.InputAuthority);
 
-            // DroppedPickup ayarlarını yap
             if (spawnedObj != null && spawnedObj.TryGetComponent<DroppedPickup>(out var pickup))
             {
                 pickup.SetLifetime(droppedPickupLifetime);
                 pickup.SetGrowthAmount(droppedPickupGrowthAmount);
-                pickup.SetScaleMultiplier(CurrentScale); // Prefab'ın base scale'i korunur
+                pickup.SetScaleMultiplier(scale);
             }
         }
+    }
+
+
+    #endregion
+
+    #region GIZMOS
+
+    /// <summary>
+    /// Editor'da punch menzilini ve raycast'i gösterir
+    /// </summary>
+    private void OnDrawGizmosSelected()
+    {
+        if (!showPunchGizmos) return;
+
+        Transform model = playerModel != null ? playerModel : transform;
+        Vector3 origin = transform.position + model.TransformDirection(punchOriginOffset);
+        Vector3 direction = model.forward;
+
+        // Punch menzil küresi (saydam turuncu)
+        Gizmos.color = gizmoRangeColor;
+        Gizmos.DrawWireSphere(origin, punchRange);
+
+        // SphereCast başlangıç noktası (küçük küre)
+        Gizmos.color = gizmoRayColor;
+        Gizmos.DrawWireSphere(origin, punchRadius);
+
+        // Punch yönü çizgisi
+        Gizmos.DrawLine(origin, origin + direction * punchRange);
+
+        // SphereCast bitiş noktası
+        Gizmos.DrawWireSphere(origin + direction * punchRange, punchRadius);
+
+        // Eğer oyun modundaysa ve hit varsa göster
+        if (Application.isPlaying && Physics.SphereCast(origin, punchRadius, direction, out RaycastHit hit, punchRange, punchTargetLayers, QueryTriggerInteraction.Ignore))
+        {
+            // Hit noktası
+            Gizmos.color = gizmoHitColor;
+            Gizmos.DrawWireSphere(hit.point, 0.2f);
+            Gizmos.DrawLine(origin, hit.point);
+        }
+    }
+
+    /// <summary>
+    /// Her zaman Gizmos göster (seçili olmasa bile)
+    /// </summary>
+    private void OnDrawGizmos()
+    {
+        // Player Collision radius'u her zaman göster
+        float scale = Application.isPlaying && CurrentScale > 0 ? CurrentScale : 1f;
+        float dynamicRadius = playerCollisionRadius * Mathf.Max(scale, 0.5f);
+
+        Gizmos.color = new Color(1f, 0f, 0f, 0.2f); // Kırmızı, saydam (collision = tehlike)
+        Gizmos.DrawWireSphere(transform.position, dynamicRadius);
+
+        // Minimum mesafe göster
+        float dynamicMinDistance = minPlayerDistance * Mathf.Max(scale, 0.5f);
+        Gizmos.color = new Color(1f, 0.5f, 0f, 0.15f); // Turuncu
+        Gizmos.DrawWireSphere(transform.position, dynamicMinDistance);
     }
 
     #endregion
 
     #region RPC METHODS
+
+    // ===== PUNCH SYSTEM RPC =====
+
+    /// <summary>
+    /// Client'tan Host'a punch isteği
+    /// </summary>
+    [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
+    public void RPC_RequestPunch(NetworkId targetId, Vector3 knockbackDirection)
+    {
+        if (Runner == null) return;
+
+        if (Runner.TryFindObject(targetId, out NetworkObject targetNetObj))
+        {
+            Player targetPlayer = targetNetObj.GetComponent<Player>();
+            if (targetPlayer != null)
+            {
+                targetPlayer.ApplyKnockback(knockbackDirection);
+                Debug.Log($"[PUNCH RPC] {Nick} -> {targetPlayer.Nick} knockback uygulandı");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Knockback bildirimi (eski sistem - geriye uyumluluk)
+    /// </summary>
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    public void RPC_OnKnockbackReceived(Vector3 direction)
+    {
+        Debug.Log($"[KNOCKBACK] {Nick} knockback aldı! Yön: {direction}");
+    }
+
+    /// <summary>
+    /// Client'tan Host'a cartoon punch isteği
+    /// </summary>
+    [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
+    public void RPC_RequestCartoonPunch(NetworkId targetId, Vector3 knockbackDirection, float force, float intensity)
+    {
+        if (Runner == null) return;
+
+        if (Runner.TryFindObject(targetId, out NetworkObject targetNetObj))
+        {
+            Player targetPlayer = targetNetObj.GetComponent<Player>();
+            if (targetPlayer != null)
+            {
+                targetPlayer.ApplyCartoonKnockback(knockbackDirection, force, intensity);
+                Debug.Log($"[CARTOON PUNCH RPC] {Nick} -> {targetPlayer.Nick} CARTOON knockback! Intensity: {intensity:F1}x");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Knockback bildirimi - tüm client'lara bildirir
+    /// </summary>
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    public void RPC_OnCartoonKnockbackReceived(Vector3 direction, float force, float intensity)
+    {
+        Debug.Log($"[KNOCKBACK] {Nick} knockback aldı! Yön: {direction}, Güç: {force:F1}");
+    }
+
+    // ===== SCALE SYSTEM RPC =====
 
     [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
     public void RPC_RequestGrow(float amount)
@@ -1036,49 +1522,7 @@ public class Player : NetworkBehaviour
         }
     }
 
-    [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
-    public void RPC_RequestSpawnPickup(Vector3 playerPosition, float playerScale)
-    {
-        Debug.Log($"[Player] RPC_RequestSpawnPickup received! Position: {playerPosition}, Scale: {playerScale}");
 
-        // StateAuthority (host) pickup'ı spawn eder
-        if (Runner == null || droppedPickupPrefab == null)
-        {
-            Debug.LogWarning("[Player] Runner null or prefab null!");
-            return;
-        }
-
-        // Zemin kontrolü - raycast ile normal bul
-        float scaledHeight = 0.5f * playerScale;
-        Vector3 rayOrigin = playerPosition + Vector3.up * scaledHeight;
-        float dynamicCheckDistance = groundCheckDistance + (startScale - playerScale) * 3f;
-
-        if (Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit hit, dynamicCheckDistance, groundLayer, QueryTriggerInteraction.Ignore))
-        {
-            Vector3 spawnPos = hit.point;
-            Quaternion spawnRot = Quaternion.FromToRotation(Vector3.up, hit.normal);
-
-            NetworkObject spawnedObj = Runner.Spawn(
-                droppedPickupPrefab,
-                spawnPos,
-                spawnRot,
-                Object.InputAuthority
-            );
-
-            Debug.Log($"[Player] Pickup spawned: {(spawnedObj != null ? "SUCCESS" : "FAILED")}");
-
-            if (spawnedObj != null && spawnedObj.TryGetComponent<DroppedPickup>(out var pickup))
-            {
-                pickup.SetLifetime(droppedPickupLifetime);
-                pickup.SetGrowthAmount(droppedPickupGrowthAmount);
-                pickup.SetScaleMultiplier(playerScale);
-            }
-        }
-        else
-        {
-            Debug.LogWarning("[Player] Ground raycast failed!");
-        }
-    }
 
     [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
     public void RPC_SetRespawnPos(Vector3 pos)
@@ -1159,5 +1603,49 @@ public class Player : NetworkBehaviour
         NetIsTouchingWall = false;
         NetIsJumping = false;
     }
-    #endregion
+
+    public void TeleportTo(Vector3 pos, Quaternion rot)
+    {
+        // NetworkCharacterController kullanıyorsan en temiz yöntem:
+        if (_cc != null)
+        {
+            _cc.Teleport(pos);
+            transform.rotation = rot;
+        }
+        else
+        {
+            transform.SetPositionAndRotation(pos, rot);
+        }
+    }
+
+    // Player class'ının içine, RPC bölgesine ekle:
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    public void RPC_PlayWin()
+    {
+        // Win animasyonu başladıysa hareket kilitle
+        MovementLocked = true;
+
+        // Kaymayı tamamen kes
+        NetVelocity = Vector3.zero;
+        if (_cc != null)
+        {
+            _cc.Velocity = Vector3.zero;
+            _cc.maxSpeed = 0f;
+            _cc.Move(Vector3.zero);
+        }
+
+        IsMoving = false;
+        IsMovingForward = false;
+        IsSprinting = false;
+
+        if (animator != null)
+        {
+            if (HasParameter(animator, "Win"))
+                animator.SetTrigger("Win");
+            else
+                Debug.LogWarning("[Player] Animator'da 'Win' trigger parametresi yok!");
+        }
+    }
+    #endregion
 }
