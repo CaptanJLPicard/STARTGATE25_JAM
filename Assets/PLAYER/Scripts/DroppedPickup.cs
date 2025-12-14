@@ -155,6 +155,47 @@ public class DroppedPickup : NetworkBehaviour
     /// </summary>
     public bool CanBeCollected()
     {
+        // Henüz spawn olmadıysa veya geçerli değilse false döndür
+        if (Object == null || !Object.IsValid) return false;
+
         return IsActive;
+    }
+
+    /// <summary>
+    /// Pickup tarafından trigger kontrolü - Player.OnTriggerEnter client'ta çalışmayabiliyor
+    /// </summary>
+    private void OnTriggerEnter(Collider other)
+    {
+        // Henüz spawn olmadıysa işlem yapma
+        if (Object == null || !Object.IsValid) return;
+
+        // Aktif değilse işlem yapma
+        if (!IsActive) return;
+        if (Runner == null) return;
+
+        // Player'ı bul
+        Player player = other.GetComponentInParent<Player>();
+        if (player == null) return;
+
+        // Player'ın NetworkObject'i geçerli mi?
+        if (player.Object == null || !player.Object.IsValid) return;
+
+        // Bu player LOCAL player mı? (Bu client'ın kontrolündeki player)
+        if (player.Object.InputAuthority != Runner.LocalPlayer) return;
+
+        Debug.Log($"[DroppedPickup] Collected by {player.gameObject.name}, LocalPlayer: {Runner.LocalPlayer}");
+
+        // Büyüme uygula
+        player.Grow(GrowthAmount);
+
+        // Despawn - Host ise direkt, client ise RPC
+        if (Object.HasStateAuthority)
+        {
+            Runner.Despawn(Object);
+        }
+        else
+        {
+            player.RPC_RequestDespawnPickup(Object.Id);
+        }
     }
 }

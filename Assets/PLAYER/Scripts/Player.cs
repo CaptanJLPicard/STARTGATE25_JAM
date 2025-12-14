@@ -47,6 +47,11 @@ public class Player : NetworkBehaviour
     [SerializeField] private float maxJumpVelocity = 10f; // Normalize için max yukarı hız
     [SerializeField] private float maxFallVelocity = 15f; // Normalize için max düşme hızı
 
+    [Header("Slope Settings")]
+    [SerializeField] private float maxWalkableSlope = 45f; // Yürünebilir maksimum eğim açısı (derece)
+    [SerializeField] private float slopeCheckDistance = 1.5f; // Zemin kontrolü ray mesafesi
+    [SerializeField] private float slopeCheckRadius = 0.3f; // SphereCast yarıçapı
+
     [Header("Scale System")]
     [SerializeField] private float shrinkDuration = 60f; // Tam küçülme süresi (saniye)
     [SerializeField] private float minScale = 0.3f; // Minimum scale değeri
@@ -112,6 +117,9 @@ public class Player : NetworkBehaviour
     [SerializeField] private float antiStackingForce = 25f;       // Üst üste binmeyi engelleme gücü
     [SerializeField] private float minPlayerDistance = 0.6f;      // Minimum oyuncu mesafesi
 
+    [Header("Visual Effects")]
+    [SerializeField] private ParticleSystem walkingFX;            // Yürürken toz efekti
+
     // Network synced
     [Networked] private float Yaw { get; set; }
     [Networked] private float Pitch { get; set; }
@@ -151,6 +159,11 @@ public class Player : NetworkBehaviour
     private float _currentAnimSpeed = 0f;
     private float _currentAirVertical = 0f;
     private bool _landingTriggered = false; // Landing animasyonu için
+
+    // Slope System - Local
+    private bool _isOnWalkableSlope = false; // Yürünebilir eğimde mi
+    private float _currentSlopeAngle = 0f; // Mevcut eğim açısı
+    private Vector3 _slopeNormal = Vector3.up; // Zemin normali
 
     // Scale System - Local
     private float _displayScale; // Görsel smooth scale
@@ -202,6 +215,12 @@ public class Player : NetworkBehaviour
     private bool _cameraInitialized;
     private const float CAMERA_TARGET_SMOOTH_TIME = 0.08f; // Hedef smooth süresi
     private const float CAMERA_POS_SMOOTH_TIME = 0.06f; // Kamera pozisyon smooth süresi
+
+    // Slope Camera Smoothing - eğimde ekstra Y ekseni yumuşatma
+    private float _cameraTargetY; // Kamera hedef Y pozisyonu (ayrı smooth)
+    private float _cameraTargetYVelocity; // Y smooth velocity
+    private const float CAMERA_Y_SMOOTH_TIME_NORMAL = 0.08f; // Normal zeminde Y smooth
+    private const float CAMERA_Y_SMOOTH_TIME_SLOPE = 0.25f; // Eğimde Y smooth (daha yavaş)
 
     // Kamera Collision - kalıcı değişkenler
     private float _cameraCollisionDistance; // Collision sonrası mesafe
@@ -341,7 +360,9 @@ public class Player : NetworkBehaviour
             }
 
             // Ziplama - Başka oyuncunun üstündeyken ASLA zıplayamaz
-            bool canJump = _cc.Grounded && !IsStandingOnPlayer();
+            // Eğimde de zıplayabilmeli
+            bool isOnGround = _cc.Grounded || CheckSlopeGroundInline();
+            bool canJump = isOnGround && !IsStandingOnPlayer();
             if (input.isJumping && canJump)
             {
                 _cc.Jump();
@@ -353,8 +374,11 @@ public class Player : NetworkBehaviour
             // Zıplama ve düşme durumlarını güncelle
             float verticalVelocity = _cc.Velocity.y;
 
+            // Eğim kontrolü - yürünebilir eğimde de grounded sayılır
+            bool effectivelyGrounded = _cc.Grounded || CheckSlopeGroundInline();
+
             // Yere değdiğinde zıplama durumunu sıfırla
-            if (_cc.Grounded)
+            if (effectivelyGrounded)
             {
                 NetIsJumping = false;
                 NetIsFalling = false;
@@ -504,8 +528,11 @@ public class Player : NetworkBehaviour
             playerModel.rotation = _interpolatedModelRotation;
         }
 
-        // Animasyon
-        bool isGrounded = _cc != null && _cc.Grounded;
+        // Slope kontrolünü her frame yap
+        CheckSlopeGround();
+
+        // Animasyon - Eğim dahil grounded kontrolü
+        bool isGrounded = IsGroundedWithSlope();
 
         if (animator != null)
         {
@@ -533,6 +560,7 @@ public class Player : NetworkBehaviour
 
             // Havada animasyon - Blend Tree için AirVertical değeri
             // 0 = JumpUp (yukarı), 1 = Falling (düşme)
+            // Eğimde olduğumuzda havada değiliz, AirVertical 0 olmalı
             float verticalVelocity = _cc != null ? _cc.Velocity.y : 0f;
             float targetAirVertical = 0f;
 
@@ -577,6 +605,25 @@ public class Player : NetworkBehaviour
 
         // Flag'leri her zaman sıfırla
         _wasGrounded = isGrounded;
+
+        // Walking FX kontrolü - sadece koşarken ve yerdeyse efekt oynat
+        if (walkingFX != null)
+        {
+            // Rotasyonu model rotasyonuyla senkronize et (network uyumlu)
+            // _interpolatedModelRotation zaten ModelRotation (Networked) değerinden türetiliyor
+            walkingFX.transform.rotation = _interpolatedModelRotation;
+
+            if (IsSprinting && isGrounded)
+            {
+                if (!walkingFX.isPlaying)
+                    walkingFX.Play();
+            }
+            else
+            {
+                if (walkingFX.isPlaying)
+                    walkingFX.Stop();
+            }
+        }
 
         // Movement state smoothing (jitter önleme)
         float targetMovingForward = IsMovingForward ? 1f : 0f;
@@ -664,13 +711,26 @@ public class Player : NetworkBehaviour
         if (!_cameraInitialized)
         {
             _cameraTargetPos = rawTargetPos;
+            _cameraTargetY = rawTargetPos.y;
             _cameraInitialized = true;
         }
 
-        // Hedef pozisyonu çift katmanlı smooth - önce interpolated, sonra camera target
-        // Bu network jitter'ı tamamen absorbe eder
+        // ===== EĞİMDE Y EKSENİ AYRI SMOOTH =====
+        // Eğim açısına göre Y smooth time'ı dinamik ayarla
+        // Eğim ne kadar dikse, Y o kadar yavaş takip etsin (titreme önleme)
+        float slopeFactor = Mathf.Clamp01(_currentSlopeAngle / maxWalkableSlope); // 0-1 arası
+        float ySmoothTime = Mathf.Lerp(CAMERA_Y_SMOOTH_TIME_NORMAL, CAMERA_Y_SMOOTH_TIME_SLOPE, slopeFactor) * scaleFactor;
+
+        // Y eksenini ayrı smooth et
+        _cameraTargetY = Mathf.SmoothDamp(_cameraTargetY, rawTargetPos.y, ref _cameraTargetYVelocity, ySmoothTime);
+
+        // XZ eksenlerini normal smooth et
         float targetSmoothTime = CAMERA_TARGET_SMOOTH_TIME * scaleFactor;
-        _cameraTargetPos = Vector3.SmoothDamp(_cameraTargetPos, rawTargetPos, ref _cameraTargetVelocity, targetSmoothTime);
+        Vector3 xzTarget = new Vector3(rawTargetPos.x, _cameraTargetPos.y, rawTargetPos.z);
+        _cameraTargetPos = Vector3.SmoothDamp(_cameraTargetPos, xzTarget, ref _cameraTargetVelocity, targetSmoothTime);
+
+        // Y'yi ayrı smooth edilmiş değerle değiştir
+        _cameraTargetPos.y = _cameraTargetY;
 
         // ===== ZOOM SMOOTH =====
         float zoomSmoothTime = 0.12f * scaleFactor;
@@ -723,18 +783,136 @@ public class Player : NetworkBehaviour
         Vector3 desiredCamPos = _cameraTargetPos - direction * finalDistance;
 
         // ===== KATMAN 2: Kamera pozisyonunu smooth et =====
+        // Eğimde daha yavaş pozisyon takibi
         float camSmoothTime = CAMERA_POS_SMOOTH_TIME * scaleFactor;
+        if (slopeFactor > 0.1f)
+        {
+            // Eğimde ekstra smooth (1.5x - 3x arası)
+            camSmoothTime *= Mathf.Lerp(1.5f, 3f, slopeFactor);
+        }
         cam.transform.position = Vector3.SmoothDamp(cam.transform.position, desiredCamPos, ref _cameraPosVelocity, camSmoothTime);
 
         // ===== LOOKAT da smooth olmalı =====
         // LookAt yerine smooth rotation kullan
+        // Eğimde daha yavaş rotasyon geçişi
         Vector3 lookDirection = _cameraTargetPos - cam.transform.position;
         if (lookDirection.sqrMagnitude > 0.001f)
         {
             Quaternion targetRotation = Quaternion.LookRotation(lookDirection);
-            cam.transform.rotation = Quaternion.Slerp(cam.transform.rotation, targetRotation, Time.deltaTime * 20f);
+            // Eğimde rotasyon hızını düşür (20 -> 10 arası)
+            float rotationSpeed = Mathf.Lerp(20f, 10f, slopeFactor);
+            cam.transform.rotation = Quaternion.Slerp(cam.transform.rotation, targetRotation, Time.deltaTime * rotationSpeed);
         }
     }
+
+    #region SLOPE SYSTEM
+
+    /// <summary>
+    /// Zemin eğimini kontrol eder ve yürünebilir bir eğimde olup olmadığını belirler.
+    /// 45 dereceye kadar olan eğimlerde karakter "grounded" sayılır.
+    /// </summary>
+    private void CheckSlopeGround()
+    {
+        _isOnWalkableSlope = false;
+        _currentSlopeAngle = 0f;
+        _slopeNormal = Vector3.up;
+
+        // Scale'e göre dinamik mesafe
+        float scale = Mathf.Max(CurrentScale, 0.1f);
+        float dynamicCheckDistance = slopeCheckDistance * scale;
+        float dynamicRadius = slopeCheckRadius * scale;
+
+        // Karakterin ayaklarından biraz yukarıdan ray at
+        Vector3 rayOrigin = transform.position + Vector3.up * (0.2f * scale);
+
+        // SphereCast ile zemin kontrolü (daha güvenilir)
+        if (Physics.SphereCast(rayOrigin, dynamicRadius, Vector3.down, out RaycastHit hit,
+            dynamicCheckDistance, groundLayer, QueryTriggerInteraction.Ignore))
+        {
+            _slopeNormal = hit.normal;
+
+            // Eğim açısını hesapla (derece cinsinden)
+            _currentSlopeAngle = Vector3.Angle(Vector3.up, _slopeNormal);
+
+            // Eğim yürünebilir aralıkta mı?
+            if (_currentSlopeAngle <= maxWalkableSlope)
+            {
+                _isOnWalkableSlope = true;
+            }
+        }
+
+        // Ek raycast kontrolü (SphereCast kaçırırsa diye)
+        if (!_isOnWalkableSlope)
+        {
+            if (Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit rayHit,
+                dynamicCheckDistance, groundLayer, QueryTriggerInteraction.Ignore))
+            {
+                float rayAngle = Vector3.Angle(Vector3.up, rayHit.normal);
+
+                if (rayAngle <= maxWalkableSlope)
+                {
+                    _isOnWalkableSlope = true;
+                    _currentSlopeAngle = rayAngle;
+                    _slopeNormal = rayHit.normal;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Karakterin yerde olup olmadığını kontrol eder (eğim dahil).
+    /// NetworkCharacterController.Grounded VEYA yürünebilir eğimdeyse true döner.
+    /// </summary>
+    private bool IsGroundedWithSlope()
+    {
+        // Önce normal grounded kontrolü
+        if (_cc != null && _cc.Grounded)
+        {
+            return true;
+        }
+
+        // Eğimde mi kontrol et
+        return _isOnWalkableSlope;
+    }
+
+    /// <summary>
+    /// FixedUpdateNetwork için inline slope kontrolü.
+    /// Her frame'de güncel sonuç döner.
+    /// </summary>
+    private bool CheckSlopeGroundInline()
+    {
+        float scale = Mathf.Max(CurrentScale, 0.1f);
+        float dynamicCheckDistance = slopeCheckDistance * scale;
+        float dynamicRadius = slopeCheckRadius * scale;
+
+        Vector3 rayOrigin = transform.position + Vector3.up * (0.2f * scale);
+
+        // SphereCast ile zemin kontrolü
+        if (Physics.SphereCast(rayOrigin, dynamicRadius, Vector3.down, out RaycastHit hit,
+            dynamicCheckDistance, groundLayer, QueryTriggerInteraction.Ignore))
+        {
+            float slopeAngle = Vector3.Angle(Vector3.up, hit.normal);
+            if (slopeAngle <= maxWalkableSlope)
+            {
+                return true;
+            }
+        }
+
+        // Ek raycast kontrolü
+        if (Physics.Raycast(rayOrigin, Vector3.down, out RaycastHit rayHit,
+            dynamicCheckDistance, groundLayer, QueryTriggerInteraction.Ignore))
+        {
+            float rayAngle = Vector3.Angle(Vector3.up, rayHit.normal);
+            if (rayAngle <= maxWalkableSlope)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    #endregion
 
     private bool HasParameter(Animator anim, string paramName)
     {

@@ -1,154 +1,221 @@
-using System.Collections;
+using Fusion;
 using UnityEngine;
 
-[AddComponentMenu("Movement/World Spin Around Pivot 360 (Dual Speed)")]
-public class RotateMachine : MonoBehaviour
+[AddComponentMenu("Movement/Network Rotate Machine (Fusion)")]
+public class RotateMachine : NetworkBehaviour
 {
     public enum Mode
     {
-        Continuous360,   // Sürekli ayný yönde 360° döngüler
-        PingPong360      // 360° ileri, 360° geri (fan gibi ters yön)
+        Continuous360,   // SÃ¼rekli aynÄ± yÃ¶nde 360Â° dÃ¶ngÃ¼ler
+        PingPong360      // 360Â° ileri, 360Â° geri (fan gibi ters yÃ¶n)
     }
 
     [Header("Pivot (World Space)")]
-    public Transform pivot;                 // Dönüþ merkezi (belirlediðin yer)
-    public Vector3 pivotOffset = Vector3.zero; // Pivot’a ek offset (istersen)
+    public Transform pivot;                 // DÃ¶nÃ¼ÅŸ merkezi
+    public Vector3 pivotOffset = Vector3.zero;
 
     [Header("Axis (World Space)")]
-    public Vector3 worldAxis = Vector3.up;  // Fan ekseni (Y genelde)
+    public Vector3 worldAxis = Vector3.up;  // DÃ¶nÃ¼ÅŸ ekseni
 
     [Header("Rotation")]
-    [Min(0.001f)] public float speedForwardDeg = 360f; // ileri dönüþ hýzý (deg/sn)
-    [Min(0.001f)] public float speedBackDeg = 360f; // geri dönüþ hýzý (deg/sn)
+    [Min(0.001f)] public float speedForwardDeg = 360f; // ileri dÃ¶nÃ¼ÅŸ hÄ±zÄ± (deg/sn)
+    [Min(0.001f)] public float speedBackDeg = 360f;    // geri dÃ¶nÃ¼ÅŸ hÄ±zÄ± (deg/sn)
     [Min(0f)] public float waitAtEnds = 0f;            // 360 bitince bekleme
-    [Min(0)] public int repeatCycles = 0;             // 0 => sonsuz (1 cycle = 360 ileri (+ geri varsa))
-    public bool playOnEnable = true;
     public Mode mode = Mode.Continuous360;
     public AnimationCurve ease = AnimationCurve.Linear(0, 0, 1, 1);
 
+    [Header("Player Push Settings")]
+    [SerializeField] private float pushForce = 15f;           // Ä°tme kuvveti
+    [SerializeField] private float tangentialMultiplier = 1f; // TeÄŸetsel (dÃ¶nÃ¼ÅŸ yÃ¶nÃ¼) kuvvet Ã§arpanÄ±
+    [SerializeField] private float radialMultiplier = 0.5f;   // Radyal (dÄ±ÅŸa doÄŸru) kuvvet Ã§arpanÄ±
+    [SerializeField] private LayerMask playerLayer;           // Player layer
+
     [Header("Optional")]
-    public bool keepRelativeOffset = true; // Objeyi pivot’a göre mevcut mesafesinde döndür
+    public bool keepRelativeOffset = true;
 
-    Coroutine _routine;
-    int _doneCycles;
+    // Networked state - tÃ¼m client'larda senkronize
+    [Networked] private float CurrentAngle { get; set; }
+    [Networked] private NetworkBool IsReversing { get; set; }
+    [Networked] private float WaitTimer { get; set; }
 
-    void OnEnable()
-    {
-        if (playOnEnable) StartSpin();
-    }
+    // Local
+    private Vector3 _initialOffset;
+    private Quaternion _initialRot;
+    private Vector3 _axis;
+    private bool _initialized;
+    private float _previousAngle;
 
-    void OnDisable()
-    {
-        StopSpin();
-    }
-
-    public void StartSpin()
+    public override void Spawned()
     {
         if (!pivot)
         {
-            Debug.LogWarning("[Rotator] pivot atanmalý.");
+            Debug.LogWarning("[RotateMachine] pivot atanmalÄ±.");
             return;
         }
 
-        StopSpin();
-        _doneCycles = 0;
-        _routine = StartCoroutine(SpinRoutine());
-    }
-
-    public void StopSpin()
-    {
-        if (_routine != null)
-        {
-            StopCoroutine(_routine);
-            _routine = null;
-        }
-    }
-
-    IEnumerator SpinRoutine()
-    {
-        bool Infinite() => repeatCycles == 0;
-
-        // Dünya eksenini normalize et
-        Vector3 axis = worldAxis.sqrMagnitude < 1e-6f ? Vector3.up : worldAxis.normalized;
-
-        // Pivot noktasý
+        _axis = worldAxis.sqrMagnitude < 1e-6f ? Vector3.up : worldAxis.normalized;
         Vector3 pivotPos = pivot.position + pivotOffset;
-
-        // Objeyi pivot etrafýnda döndürürken, istersen mevcut offsetini koru
-        Vector3 initialOffset = transform.position - pivotPos;
-        Quaternion initialRot = transform.rotation;
-
-        while (Infinite() || _doneCycles < repeatCycles)
-        {
-            // 360 ileri
-            yield return Rotate360(pivotPos, axis, speedForwardDeg, initialOffset, initialRot);
-
-            if (waitAtEnds > 0f) yield return new WaitForSeconds(waitAtEnds);
-
-            if (mode == Mode.PingPong360)
-            {
-                // 360 geri
-                yield return Rotate360(pivotPos, axis, speedBackDeg, initialOffset, initialRot, reverse: true);
-
-                if (waitAtEnds > 0f) yield return new WaitForSeconds(waitAtEnds);
-            }
-
-            _doneCycles++;
-        }
-
-        _routine = null;
+        _initialOffset = transform.position - pivotPos;
+        _initialRot = transform.rotation;
+        _initialized = true;
+        _previousAngle = CurrentAngle;
     }
 
-    IEnumerator Rotate360(
-        Vector3 pivotPos,
-        Vector3 axis,
-        float speedDegPerSec,
-        Vector3 initialOffset,
-        Quaternion initialRot,
-        bool reverse = false
-    )
+    public override void FixedUpdateNetwork()
     {
-        float duration = 360f / Mathf.Max(0.0001f, speedDegPerSec);
-        float t = 0f;
+        if (!_initialized || !pivot) return;
 
-        while (t < 1f)
+        // Sadece StateAuthority aÃ§Ä± hesaplar
+        if (Object.HasStateAuthority)
         {
-            t += Time.deltaTime / duration;
-            float e = ease.Evaluate(Mathf.Clamp01(t));
-
-            float angle = Mathf.LerpUnclamped(0f, 360f, e);
-            if (reverse) angle = -angle;
-
-            // Pivot hareket ediyorsa canlý oku
-            Vector3 livePivot = pivot.position + pivotOffset;
-
-            // Pozisyonu pivot etrafýnda döndür (fan kanadý gibi)
-            if (keepRelativeOffset)
-            {
-                Vector3 rotatedOffset = Quaternion.AngleAxis(angle, axis) * initialOffset;
-                transform.position = livePivot + rotatedOffset;
-            }
-
-            // Objeyi de kendi ekseni etrafýnda döndür (görsel pervane dönüþü)
-            transform.rotation = Quaternion.AngleAxis(angle, axis) * initialRot;
-
-            yield return null;
+            UpdateRotationState();
         }
 
-        // Son snap
-        float finalAngle = reverse ? -360f : 360f;
-        Vector3 finalPivot = pivot.position + pivotOffset;
+        // TÃ¼m client'larda transform gÃ¼ncelle
+        ApplyRotation();
+    }
 
+    private void UpdateRotationState()
+    {
+        // Bekleme varsa bekle
+        if (WaitTimer > 0)
+        {
+            WaitTimer -= Runner.DeltaTime;
+            return;
+        }
+
+        float speed = IsReversing ? speedBackDeg : speedForwardDeg;
+        float deltaAngle = speed * Runner.DeltaTime;
+
+        if (IsReversing)
+        {
+            CurrentAngle -= deltaAngle;
+
+            if (CurrentAngle <= 0f)
+            {
+                CurrentAngle = 0f;
+                IsReversing = false;
+
+                if (waitAtEnds > 0f)
+                    WaitTimer = waitAtEnds;
+            }
+        }
+        else
+        {
+            CurrentAngle += deltaAngle;
+
+            if (CurrentAngle >= 360f)
+            {
+                if (mode == Mode.PingPong360)
+                {
+                    CurrentAngle = 360f;
+                    IsReversing = true;
+
+                    if (waitAtEnds > 0f)
+                        WaitTimer = waitAtEnds;
+                }
+                else
+                {
+                    // Continuous - sÄ±fÄ±rla ve devam et
+                    CurrentAngle -= 360f;
+                }
+            }
+        }
+    }
+
+    private void ApplyRotation()
+    {
+        Vector3 livePivot = pivot.position + pivotOffset;
+
+        float angle = IsReversing ? CurrentAngle : CurrentAngle;
+        if (mode == Mode.Continuous360)
+        {
+            angle = CurrentAngle % 360f;
+        }
+
+        // Ease curve uygula (opsiyonel)
+        float normalizedAngle = angle / 360f;
+        float easedNormalized = ease.Evaluate(normalizedAngle);
+        float easedAngle = easedNormalized * 360f;
+
+        // Pozisyonu pivot etrafÄ±nda dÃ¶ndÃ¼r
         if (keepRelativeOffset)
         {
-            Vector3 rotatedOffset = Quaternion.AngleAxis(finalAngle, axis) * initialOffset;
-            transform.position = finalPivot + rotatedOffset;
+            Vector3 rotatedOffset = Quaternion.AngleAxis(easedAngle, _axis) * _initialOffset;
+            transform.position = livePivot + rotatedOffset;
         }
 
-        transform.rotation = Quaternion.AngleAxis(finalAngle, axis) * initialRot;
+        // Objeyi kendi ekseni etrafÄ±nda dÃ¶ndÃ¼r
+        transform.rotation = Quaternion.AngleAxis(easedAngle, _axis) * _initialRot;
+
+        _previousAngle = CurrentAngle;
     }
 
-    void OnDrawGizmosSelected()
+    // Physics collision - Player'Ä± it
+    private void OnCollisionStay(Collision collision)
+    {
+        TryPushPlayer(collision.gameObject, collision.contacts[0].point);
+    }
+
+    private void OnTriggerStay(Collider other)
+    {
+        TryPushPlayer(other.gameObject, other.ClosestPoint(transform.position));
+    }
+
+    private void TryPushPlayer(GameObject obj, Vector3 contactPoint)
+    {
+        // Layer kontrolÃ¼
+        if (playerLayer != 0 && ((1 << obj.layer) & playerLayer) == 0)
+            return;
+
+        Player player = obj.GetComponentInParent<Player>();
+        if (player == null) return;
+
+        // Sadece StateAuthority (host) push uygular
+        if (!Object.HasStateAuthority) return;
+
+        // DÃ¶nÃ¼ÅŸ hÄ±zÄ±nÄ± hesapla
+        float currentSpeed = IsReversing ? -speedBackDeg : speedForwardDeg;
+        float angularVelocity = currentSpeed * Mathf.Deg2Rad; // rad/s
+
+        // Pivot pozisyonu
+        Vector3 pivotPos = pivot.position + pivotOffset;
+
+        // Contact point'ten pivot'a vektÃ¶r
+        Vector3 radialDir = (contactPoint - pivotPos);
+        radialDir.y = 0; // Yatay dÃ¼zlemde
+        float radius = radialDir.magnitude;
+
+        if (radius < 0.01f) return;
+
+        radialDir = radialDir.normalized;
+
+        // TeÄŸetsel yÃ¶n (dÃ¶nÃ¼ÅŸ yÃ¶nÃ¼nde)
+        Vector3 tangentDir = Vector3.Cross(_axis, radialDir).normalized;
+
+        // Lineer hÄ±z = aÃ§Ä±sal hÄ±z * yarÄ±Ã§ap
+        float linearSpeed = Mathf.Abs(angularVelocity) * radius;
+
+        // Push vektÃ¶rÃ¼ hesapla
+        Vector3 pushDir = Vector3.zero;
+
+        // TeÄŸetsel kuvvet (dÃ¶nÃ¼ÅŸ yÃ¶nÃ¼nde)
+        pushDir += tangentDir * Mathf.Sign(angularVelocity) * tangentialMultiplier;
+
+        // Radyal kuvvet (dÄ±ÅŸa doÄŸru)
+        pushDir += radialDir * radialMultiplier;
+
+        pushDir = pushDir.normalized;
+
+        // Final push
+        Vector3 finalPush = pushDir * linearSpeed * pushForce * Runner.DeltaTime;
+
+        // Player'Ä±n ExternalPush'una ekle (mevcut fan sistemi gibi)
+        //player.RPC_AddExternalPush(finalPush);
+    }
+
+    // Gizmos
+    private void OnDrawGizmosSelected()
     {
         if (!pivot) return;
 
@@ -159,5 +226,12 @@ public class RotateMachine : MonoBehaviour
         Vector3 axis = worldAxis.sqrMagnitude < 1e-6f ? Vector3.up : worldAxis.normalized;
         Gizmos.color = Color.green;
         Gizmos.DrawLine(p, p + axis * 0.5f);
+
+        // DÃ¶nÃ¼ÅŸ yÃ¶nÃ¼nÃ¼ gÃ¶ster
+        Gizmos.color = Color.cyan;
+        Vector3 tangent = Vector3.Cross(axis, Vector3.forward).normalized;
+        if (tangent.sqrMagnitude < 0.1f)
+            tangent = Vector3.Cross(axis, Vector3.right).normalized;
+        Gizmos.DrawLine(p, p + tangent * 0.3f);
     }
 }
