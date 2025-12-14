@@ -36,6 +36,9 @@ public class LevelManager : NetworkBehaviour
             if (spawnObj != null) defaultSpawn = spawnObj.transform;
             else Debug.LogWarning("SpawnPoint tag'li obje bulunamadı! defaultSpawn atanmamış.");
         }
+
+        // Oyun basladıgında cursor gizle ve kilitle
+        LockCursor();
     }
 
     // === CHECKPOINT KAYDI (Host) ===
@@ -104,7 +107,46 @@ public class LevelManager : NetworkBehaviour
         {
             stop = !stop;
             if (EscapePanel != null) EscapePanel.SetActive(stop);
+
+            // Panel durumuna gore cursor ayarla
+            UpdateCursorState();
         }
+    }
+
+    /// <summary>
+    /// Panel durumuna gore cursor'u gunceller
+    /// </summary>
+    private void UpdateCursorState()
+    {
+        bool anyPanelOpen = (EscapePanel != null && EscapePanel.activeInHierarchy) ||
+                            (SettingsPanel != null && SettingsPanel.activeInHierarchy);
+
+        if (anyPanelOpen)
+        {
+            UnlockCursor();
+        }
+        else
+        {
+            LockCursor();
+        }
+    }
+
+    /// <summary>
+    /// Cursor'u gizler ve ortaya kilitler
+    /// </summary>
+    private void LockCursor()
+    {
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
+    }
+
+    /// <summary>
+    /// Cursor'u serbest birakir ve gorunur yapar
+    /// </summary>
+    private void UnlockCursor()
+    {
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
     }
 
     // === MAIN MENU ===
@@ -140,11 +182,24 @@ public class LevelManager : NetworkBehaviour
     {
         if (SettingsPanel != null) SettingsPanel.SetActive(true);
         if (EscapePanel != null) EscapePanel.SetActive(false);
+        UpdateCursorState();
     }
 
     public void SettingsBtnClose()
     {
         if (SettingsPanel != null) SettingsPanel.SetActive(false);
         if (EscapePanel != null) EscapePanel.SetActive(true);
+        UpdateCursorState();
+    }
+
+    /// <summary>
+    /// Tum panelleri kapatir ve cursor'u kilitler
+    /// </summary>
+    public void CloseAllPanels()
+    {
+        stop = false;
+        if (EscapePanel != null) EscapePanel.SetActive(false);
+        if (SettingsPanel != null) SettingsPanel.SetActive(false);
+        LockCursor();
     }
 }
