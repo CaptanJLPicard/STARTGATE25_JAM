@@ -1,5 +1,6 @@
 ﻿using UnityEngine;
 using Fusion;
+using MoreMountains.Feedbacks;
 
 [AddComponentMenu("Movement/Fusion PunchMachine PingPong (Ultra Smooth)")]
 [RequireComponent(typeof(Collider))]
@@ -44,11 +45,15 @@ public class PunchMachine : NetworkBehaviour
     private Vector3 _renderVel;
     private bool _renderInit;
 
+    [SerializeField] private MMF_Player pressSounds;
+
     private void Awake()
     {
         // LevelManager otomatik bul
         if (levelManager == null)
             levelManager = FindFirstObjectByType<LevelManager>(FindObjectsInactive.Include);
+        
+        pressSounds = GameObject.Find("PressSounds").GetComponent<MMF_Player>();
     }
 
     public override void Spawned()
@@ -135,6 +140,8 @@ public class PunchMachine : NetworkBehaviour
             if (T >= 1f)
             {
                 // B'ye vardık
+                pressSounds.PlayFeedbacks();
+
                 if (waitAtEnds > 0f)
                     WaitTimer = TickTimer.CreateFromSeconds(Runner, waitAtEnds);
 

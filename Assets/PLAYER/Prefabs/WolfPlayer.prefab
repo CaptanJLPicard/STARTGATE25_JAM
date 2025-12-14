@@ -7770,10 +7770,10 @@ MonoBehaviour:
   cameraCollisionRadius: 0.3
   cameraCollisionLayers:
     serializedVersion: 2
-    m_Bits: 4294967295
+    m_Bits: 55
   cameraCollisionOffset: 0.1
-  moveSpeed: 4.5
-  sprintSpeed: 8
+  moveSpeed: 3.5
+  sprintSpeed: 6
   rotationSpeed: 10
   jumpForce: 7.5
   fallingThreshold: -2
@@ -7802,10 +7802,6 @@ MonoBehaviour:
   groundLayer:
     serializedVersion: 2
     m_Bits: 4294967295
-  pickupCollectionRadius: 0.3
-  pickupLayer:
-    serializedVersion: 2
-    m_Bits: 1
   headRig: {fileID: 1917375121213726567}
   leftArmRig: {fileID: 1954669922743269687}
   rightArmRig: {fileID: 1745272151303533834}

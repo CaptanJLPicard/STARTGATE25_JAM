@@ -5,13 +5,13 @@ using UnityEngine;
 public class BallRespawnTrigger : MonoBehaviour
 {
     [Header("Fusion")]
-    [Tooltip("Boþsa sahneden LevelManager otomatik bulunur.")]
+    [Tooltip("Boï¿½sa sahneden LevelManager otomatik bulunur.")]
     [SerializeField] private LevelManager levelManager;
 
     [Tooltip("Genelde sadece Host respawn etsin.")]
     [SerializeField] private bool onlyIfHost = true;
 
-    [Tooltip("Topun colliderý trigger olsun mu? (Ýstersen çarpýþma yerine trigger)")]
+    [Tooltip("Topun colliderï¿½ trigger olsun mu? (ï¿½stersen ï¿½arpï¿½ï¿½ma yerine trigger)")]
     [SerializeField] private bool forceTrigger = true;
 
     private void Awake()
@@ -21,6 +21,8 @@ public class BallRespawnTrigger : MonoBehaviour
 
         if (levelManager == null)
             levelManager = FindFirstObjectByType<LevelManager>(FindObjectsInactive.Include);
+        
+        Destroy(gameObject,15f);
     }
 
     private void OnTriggerEnter(Collider other)
@@ -40,7 +42,7 @@ public class BallRespawnTrigger : MonoBehaviour
             levelManager.ServerRespawn(player);
     }
 
-    // Trigger kullanmak istemezsen (col.isTrigger=false), bu da çalýþsýn:
+    // Trigger kullanmak istemezsen (col.isTrigger=false), bu da ï¿½alï¿½ï¿½sï¿½n:
     private void OnCollisionEnter(Collision collision)
     {
         if (forceTrigger) return; // trigger aktifse collision'a gerek yok

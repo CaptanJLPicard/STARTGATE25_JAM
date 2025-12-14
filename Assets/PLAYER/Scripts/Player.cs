@@ -1,5 +1,6 @@
 using Fusion;
 using System;
+using MoreMountains.Feedbacks;
 using UnityEngine;
 using TMPro;
 
@@ -120,6 +121,13 @@ public class Player : NetworkBehaviour
     [Header("Visual Effects")]
     [SerializeField] private ParticleSystem walkingFX;            // Yürürken toz efekti
 
+    
+    [Header("Effects")]
+    [SerializeField] private MMF_Player jumpEffect;
+    [SerializeField] private MMF_Player punchEffects;
+    [SerializeField] private MMF_Player walkEffects;
+    [SerializeField] private MMF_Player deathEffects;
+    
     // Network synced
     [Networked] private float Yaw { get; set; }
     [Networked] private float Pitch { get; set; }
@@ -226,6 +234,10 @@ public class Player : NetworkBehaviour
     private float _cameraCollisionDistance; // Collision sonrası mesafe
     private float _cameraCollisionVelocity; // Collision smooth velocity
 
+    // Wiggle Lock System - Spawn/Teleport sonrası sallanmayı engeller
+    private float _wiggleLockUntilTime; // Bu zamana kadar wiggle kilitli
+    private const float WIGGLE_LOCK_DURATION = 0.5f; // Kilit süresi (saniye)
+
     // Punch System - Local
     private bool _punchAnimTriggered;             // Punch animasyonu tetiklendi mi
 
@@ -234,6 +246,10 @@ public class Player : NetworkBehaviour
         if (_cc == null)
             _cc = GetComponent<NetworkCharacterController>();
 
+        jumpEffect = GameObject.Find("jumpEffect").GetComponent<MMF_Player>();
+        punchEffects = GameObject.Find("punchEffects").GetComponent<MMF_Player>();
+        deathEffects = GameObject.Find("deathEffects").GetComponent<MMF_Player>();
+        
         if (_cc != null)
         {
             _cc.jumpImpulse = jumpForce;
@@ -261,6 +277,9 @@ public class Player : NetworkBehaviour
 
         // Wiggle efekti için başlangıç rotasyonlarını kaydet
         InitializeWiggleSystem();
+
+        // Spawn sonrası wiggle kilidini aktifleştir (sallanmayı önle)
+        LockWiggleTemporarily();
 
         if (Object.HasInputAuthority)
         {
@@ -705,7 +724,9 @@ public class Player : NetworkBehaviour
         float dynamicCameraHeight = cameraHeight * scaleFactor;
 
         // ===== KATMAN 1: Hedef pozisyonu smooth et (network jitter absorbe) =====
-        Vector3 rawTargetPos = transform.position + Vector3.up * dynamicCameraHeight;
+        // Client'ta network sync jitter'ını önlemek için interpolated pozisyon kullan
+        Vector3 basePosition = _positionInitialized ? _interpolatedPosition : transform.position;
+        Vector3 rawTargetPos = basePosition + Vector3.up * dynamicCameraHeight;
 
         // İlk çağrıda başlat
         if (!_cameraInitialized)
@@ -945,10 +966,27 @@ public class Player : NetworkBehaviour
         float deltaTime = Time.deltaTime;
         if (deltaTime <= 0.0001f) return;
 
+        // Wiggle kilitli mi kontrol et (spawn/teleport sonrası)
+        if (Time.time < _wiggleLockUntilTime)
+        {
+            // Kilitli - pozisyonu güncelle ama efekt uygulama
+            _lastPosition = transform.position;
+            _smoothedVelocity = Vector3.zero;
+            return;
+        }
+
         // Karakterin dünya uzayındaki hızını hesapla
         Vector3 currentPosition = transform.position;
         Vector3 worldVelocity = (currentPosition - _lastPosition) / deltaTime;
         _lastPosition = currentPosition;
+
+        // Aşırı hız kontrolü - teleport algılama (saniyede 50 birimden fazla = muhtemelen teleport)
+        if (worldVelocity.sqrMagnitude > 2500f) // 50^2 = 2500
+        {
+            // Ani pozisyon değişikliği - muhtemelen teleport, wiggle'ı kilitle
+            LockWiggleTemporarily();
+            return;
+        }
 
         // Hızı yumuşat (ani değişimleri önle)
         _smoothedVelocity = Vector3.Lerp(_smoothedVelocity, worldVelocity, deltaTime * velocitySmoothing);
@@ -1052,6 +1090,24 @@ public class Player : NetworkBehaviour
         _smoothedVelocity = Vector3.zero;
         _lastPosition = transform.position;
 
+        _headCurrentOffset = Vector3.zero;
+        _headVelocity = Vector3.zero;
+        _leftArmCurrentOffset = Vector3.zero;
+        _leftArmVelocity = Vector3.zero;
+        _rightArmCurrentOffset = Vector3.zero;
+        _rightArmVelocity = Vector3.zero;
+    }
+
+    /// <summary>
+    /// Wiggle sistemini geçici olarak kilitler (spawn/teleport sonrası sallanmayı önler)
+    /// </summary>
+    public void LockWiggleTemporarily()
+    {
+        _wiggleLockUntilTime = Time.time + WIGGLE_LOCK_DURATION;
+        _lastPosition = transform.position;
+        _smoothedVelocity = Vector3.zero;
+
+        // Mevcut offset ve velocity'leri sıfırla
         _headCurrentOffset = Vector3.zero;
         _headVelocity = Vector3.zero;
         _leftArmCurrentOffset = Vector3.zero;
@@ -1370,6 +1426,7 @@ public class Player : NetworkBehaviour
             }
 
             Debug.Log($"[PUNCH] {Nick} -> {targetPlayer.Nick} Scale: {CurrentScale:F2} -> Güç: {scaleMultiplier:F1}x");
+            punchEffects.PlayFeedbacks();   
         }
     }
 
@@ -1444,11 +1501,16 @@ public class Player : NetworkBehaviour
 
     /// <summary>
     /// PowerUp ve DroppedPickup ile trigger collision
+    /// Photon Fusion'da physics events HOST'ta işlenir, bu yüzden StateAuthority kontrolü yapıyoruz.
+    /// CurrentScale [Networked] olduğu için değişiklikler otomatik tüm client'lara sync olur.
     /// </summary>
     private void OnTriggerEnter(Collider other)
     {
-        // Sadece InputAuthority (local player) ve hareket ederken toplayabilir
-        if (!Object.HasInputAuthority) return;
+        // Sadece StateAuthority (Host) collision işlesin - network sync için
+        // Physics events host'ta çalışır, client'ta HasInputAuthority false döner
+        if (!Object.HasStateAuthority) return;
+
+        // Hareket etmiyorsa toplama
         if (!IsMoving) return;
 
         // DroppedPickup kontrolü
@@ -1460,22 +1522,15 @@ public class Player : NetworkBehaviour
             // NetworkObject'i al
             if (!other.TryGetComponent<NetworkObject>(out var netObj)) return;
 
-            // Büyüme uygula (hız ve zıplama otomatik scale ile artar)
+            // Büyüme uygula - StateAuthority'deyiz, direkt güncelleyebiliriz
             float growth = droppedPickup.GrowthAmount;
-            Grow(growth);
+            CurrentScale = Mathf.Clamp(CurrentScale + growth, minScale, maxScale);
+            UpdateStatsBasedOnScale();
 
-            // Network üzerinden despawn - Host ise direkt, client ise RPC
+            // Despawn - StateAuthority olduğumuz için direkt yapabiliriz
             if (Runner != null)
             {
-                if (Object.HasStateAuthority)
-                {
-                    Runner.Despawn(netObj);
-                }
-                else
-                {
-                    // Client: RPC ile host'a despawn isteği gönder
-                    RPC_RequestDespawnPickup(netObj.Id);
-                }
+                Runner.Despawn(netObj);
             }
             return;
         }
@@ -1483,26 +1538,25 @@ public class Player : NetworkBehaviour
         // Normal PowerUp kontrolü
         if (other.CompareTag("PowerUp"))
         {
-            // PowerUp'ı yok et ve büyü
-            Grow(powerUpGrowthAmount);
+            // Büyüme uygula - StateAuthority'deyiz, direkt güncelleyebiliriz
+            CurrentScale = Mathf.Clamp(CurrentScale + powerUpGrowthAmount, minScale, maxScale);
+            UpdateStatsBasedOnScale();
 
             // PowerUp objesini yok et (network üzerinden)
             if (Runner != null && other.TryGetComponent<NetworkObject>(out var netObj))
             {
-                if (Object.HasStateAuthority)
-                {
-                    Runner.Despawn(netObj);
-                }
-                else
-                {
-                    RPC_RequestDespawnPickup(netObj.Id);
-                }
+                Runner.Despawn(netObj);
             }
             else
             {
                 // Network objesi değilse normal destroy
                 Destroy(other.gameObject);
             }
+        }
+
+        if (other.gameObject.CompareTag("Death"))
+        {
+            deathEffects.PlayFeedbacks();
         }
     }
 
@@ -1716,6 +1770,9 @@ public class Player : NetworkBehaviour
         // Interpolation değerlerini hemen güncelle
         _interpolatedPosition = RespawnPos;
         _positionVelocity = Vector3.zero;
+
+        // Wiggle sistemini kilitle (teleport sonrası sallanmayı önle)
+        LockWiggleTemporarily();
     }
 
     [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
@@ -1743,7 +1800,7 @@ public class Player : NetworkBehaviour
 
         if (Object.HasInputAuthority)
         {
-            Debug.Log($"<color=green>�lk spawn noktas�na d�n�yorsun!</color>");
+            Debug.Log($"<color=green> lk spawn noktas na d n yorsun!</color>");
         }
     }
     [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
@@ -1760,12 +1817,12 @@ public class Player : NetworkBehaviour
 
                 if (Object.HasInputAuthority)
                 {
-                    Debug.Log($"<color=green>Spawn noktas�na ���nland�n�z!</color>");
+                    Debug.Log($"<color=green>Spawn noktas na    nland n z!</color>");
                 }
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"Teleport hatas�: {e.Message}");
+                Debug.LogWarning($"Teleport hatas : {e.Message}");
                 transform.position = targetPosition;
             }
         }
@@ -1777,6 +1834,9 @@ public class Player : NetworkBehaviour
         // Interpolation değerlerini hemen güncelle (teleport sonrası jitter önleme)
         _interpolatedPosition = targetPosition;
         _positionVelocity = Vector3.zero;
+
+        // Wiggle sistemini kilitle (teleport sonrası sallanmayı önle)
+        LockWiggleTemporarily();
 
         NetIsTouchingWall = false;
         NetIsJumping = false;
@@ -1794,6 +1854,11 @@ public class Player : NetworkBehaviour
         {
             transform.SetPositionAndRotation(pos, rot);
         }
+
+        // Interpolation ve wiggle güncelle
+        _interpolatedPosition = pos;
+        _positionVelocity = Vector3.zero;
+        LockWiggleTemporarily();
     }
 
     // Player class'ının içine, RPC bölgesine ekle:
