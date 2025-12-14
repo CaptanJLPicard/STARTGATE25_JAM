@@ -7673,6 +7673,11 @@ MonoBehaviour:
   antiStackingForce: 25
   minPlayerDistance: 0.6
   walkingFX: {fileID: 2825639301123376900}
+  particleGroundCheckDistance: 5
+  powerUpParticlePrefab: {fileID: 8697281496465372601, guid: 4d73887272bdb434e8dd65f4bb5638d0, type: 3}
+  jumpParticlePrefab: {fileID: 6522446637742744975, guid: 10b859a0a5ba72944bd55e43ed7065ff, type: 3}
+  punchParticlePrefab: {fileID: 0}
+  deathParticlePrefab: {fileID: 0}
   _NetVelocity: {x: 0, y: 0, z: 0}
   _NetIsTouchingWall:
     _value: 0

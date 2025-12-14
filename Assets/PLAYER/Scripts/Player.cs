@@ -1,6 +1,5 @@
 using Fusion;
 using System;
-using MoreMountains.Feedbacks;
 using UnityEngine;
 using TMPro;
 
@@ -120,13 +119,13 @@ public class Player : NetworkBehaviour
 
     [Header("Visual Effects")]
     [SerializeField] private ParticleSystem walkingFX;            // Yürürken toz efekti
+    [SerializeField] private float particleGroundCheckDistance = 5f; // Zemin normal kontrolü mesafesi
 
-    
-    [Header("Effects")]
-    [SerializeField] private MMF_Player jumpEffect;
-    [SerializeField] private MMF_Player punchEffects;
-    [SerializeField] private MMF_Player walkEffects;
-    [SerializeField] private MMF_Player deathEffects;
+    [Header("Particle Effect Prefabs (Network Synced)")]
+    [SerializeField] private GameObject powerUpParticlePrefab;    // PowerUp toplandığında spawn edilecek particle prefab
+    [SerializeField] private GameObject jumpParticlePrefab;       // Zıplarken spawn edilecek particle prefab
+    [SerializeField] private GameObject punchParticlePrefab;      // Punch yaparken spawn edilecek particle prefab
+    [SerializeField] private GameObject deathParticlePrefab;      // Ölürken spawn edilecek particle prefab
     
     // Network synced
     [Networked] private float Yaw { get; set; }
@@ -241,15 +240,21 @@ public class Player : NetworkBehaviour
     // Punch System - Local
     private bool _punchAnimTriggered;             // Punch animasyonu tetiklendi mi
 
+    // Particle System - Çoklu spawn önleme (TRIGGER tarafı)
+    private bool _didJumpParticle;
+
+    // Particle System - Çoklu spawn önleme (SPAWN/RPC tarafı)
+    private float _lastJumpSpawnTime = -999f;
+    private float _lastPowerUpSpawnTime = -999f;
+    private float _lastPunchSpawnTime = -999f;
+    private float _lastDeathSpawnTime = -999f;
+    private const float PARTICLE_SPAWN_COOLDOWN = 0.3f;
+
     public override void Spawned()
     {
         if (_cc == null)
             _cc = GetComponent<NetworkCharacterController>();
 
-        jumpEffect = GameObject.Find("jumpEffect").GetComponent<MMF_Player>();
-        punchEffects = GameObject.Find("punchEffects").GetComponent<MMF_Player>();
-        deathEffects = GameObject.Find("deathEffects").GetComponent<MMF_Player>();
-        
         if (_cc != null)
         {
             _cc.jumpImpulse = jumpForce;
@@ -386,22 +391,28 @@ public class Player : NetworkBehaviour
             {
                 _cc.Jump();
                 NetIsJumping = true;
-                DidJump = true; // GERÇEK zıplama yapıldı
-                _jumpTriggered = true; // Animasyon için flag
+                DidJump = true;
+                _jumpTriggered = true;
+
+                // Jump particle - SADECE InputAuthority'de, forward'da ve 1 KERE
+                if (Object.HasInputAuthority && Runner.IsForward && !_didJumpParticle)
+                {
+                    _didJumpParticle = true;
+                    TriggerJumpParticle();
+                }
             }
 
             // Zıplama ve düşme durumlarını güncelle
             float verticalVelocity = _cc.Velocity.y;
-
-            // Eğim kontrolü - yürünebilir eğimde de grounded sayılır
             bool effectivelyGrounded = _cc.Grounded || CheckSlopeGroundInline();
 
-            // Yere değdiğinde zıplama durumunu sıfırla
+            // Yere değdiğinde sıfırla
             if (effectivelyGrounded)
             {
                 NetIsJumping = false;
                 NetIsFalling = false;
-                DidJump = false; // Yere indi, zıplama flag'ini sıfırla
+                DidJump = false;
+                if (Object.HasInputAuthority) _didJumpParticle = false;
             }
             else
             {
@@ -1426,7 +1437,9 @@ public class Player : NetworkBehaviour
             }
 
             Debug.Log($"[PUNCH] {Nick} -> {targetPlayer.Nick} Scale: {CurrentScale:F2} -> Güç: {scaleMultiplier:F1}x");
-            punchEffects.PlayFeedbacks();   
+
+            // Punch particle effect spawn et
+            TriggerPunchParticle();
         }
     }
 
@@ -1556,7 +1569,8 @@ public class Player : NetworkBehaviour
 
         if (other.gameObject.CompareTag("Death"))
         {
-            deathEffects.PlayFeedbacks();
+            // Death particle effect spawn et
+            TriggerDeathParticle();
         }
     }
 
@@ -1751,6 +1765,164 @@ public class Player : NetworkBehaviour
         else
         {
             Debug.LogWarning($"[Player] RPC_RequestDespawnPickup: Pickup {pickupId} not found!");
+        }
+    }
+
+    // ===== PARTICLE EFFECT SYSTEM (Network Synced) =====
+    // InputAuthority TRIGGER eder → Host SPAWN eder → Tüm client'lar görür
+
+    private void SpawnParticleLocal(GameObject prefab, Vector3 position, Vector3 groundNormal)
+    {
+        if (prefab == null)
+        {
+            Debug.LogWarning($"[Player] SpawnParticleLocal: Prefab is NULL! Cannot spawn particle.");
+            return;
+        }
+
+        Debug.Log($"[Player] SpawnParticleLocal: Spawning {prefab.name} at {position}");
+        Quaternion rotation = Quaternion.LookRotation(groundNormal);
+        GameObject particleObj = Instantiate(prefab, position, rotation);
+
+        ParticleSystem ps = particleObj.GetComponent<ParticleSystem>();
+        if (ps != null)
+        {
+            ps.Play();
+            Destroy(particleObj, ps.main.duration + ps.main.startLifetime.constantMax);
+        }
+        else
+        {
+            Destroy(particleObj, 3f);
+        }
+    }
+
+    private bool GetGroundInfo(out Vector3 groundPosition, out Vector3 groundNormal)
+    {
+        groundNormal = Vector3.up;
+        groundPosition = transform.position;
+
+        if (Physics.Raycast(transform.position + Vector3.up * 0.5f, Vector3.down, out RaycastHit hit, particleGroundCheckDistance, groundLayer))
+        {
+            groundNormal = hit.normal;
+            groundPosition = hit.point;
+            return true;
+        }
+        return false;
+    }
+
+    // ===== JUMP PARTICLE =====
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    public void RPC_SpawnJumpParticle(Vector3 position, Vector3 normal)
+    {
+        // Cooldown kontrolü - çoklu spawn önle
+        if (Time.time - _lastJumpSpawnTime < PARTICLE_SPAWN_COOLDOWN) return;
+        _lastJumpSpawnTime = Time.time;
+        SpawnParticleLocal(jumpParticlePrefab, position, normal);
+    }
+
+    [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
+    public void RPC_RequestSpawnJumpParticle(Vector3 position, Vector3 normal)
+    {
+        RPC_SpawnJumpParticle(position, normal);
+    }
+
+    public void TriggerJumpParticle()
+    {
+        if (Runner == null) return;
+
+        GetGroundInfo(out Vector3 groundPosition, out Vector3 groundNormal);
+
+        if (Object.HasStateAuthority)
+        {
+            // HOST: Direkt spawn
+            RPC_SpawnJumpParticle(groundPosition, groundNormal);
+        }
+        else if (Object.HasInputAuthority)
+        {
+            // CLIENT: Host'a istek gönder
+            RPC_RequestSpawnJumpParticle(groundPosition, groundNormal);
+        }
+    }
+
+    // ===== POWERUP PARTICLE =====
+    // DroppedPickup ve PowerUp OnTriggerEnter'dan direkt çağrılır
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    public void RPC_SpawnPowerUpParticle(Vector3 position, Vector3 normal)
+    {
+        if (Time.time - _lastPowerUpSpawnTime < PARTICLE_SPAWN_COOLDOWN) return;
+        _lastPowerUpSpawnTime = Time.time;
+        SpawnParticleLocal(powerUpParticlePrefab, position, normal);
+    }
+
+    [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
+    public void RPC_RequestSpawnPowerUpParticle(Vector3 position, Vector3 normal)
+    {
+        RPC_SpawnPowerUpParticle(position, normal);
+    }
+
+    // ===== PUNCH PARTICLE =====
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    public void RPC_SpawnPunchParticle(Vector3 position, Vector3 forward)
+    {
+        if (Time.time - _lastPunchSpawnTime < PARTICLE_SPAWN_COOLDOWN) return;
+        _lastPunchSpawnTime = Time.time;
+        SpawnParticleLocal(punchParticlePrefab, position, forward);
+    }
+
+    [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
+    public void RPC_RequestSpawnPunchParticle(Vector3 position, Vector3 forward)
+    {
+        RPC_SpawnPunchParticle(position, forward);
+    }
+
+    public void TriggerPunchParticle()
+    {
+        if (Runner == null) return;
+
+        Vector3 punchPosition = transform.position + punchOriginOffset + transform.forward * 0.5f;
+        Vector3 punchForward = transform.forward;
+
+        if (Object.HasStateAuthority)
+        {
+            RPC_SpawnPunchParticle(punchPosition, punchForward);
+        }
+        else if (Object.HasInputAuthority)
+        {
+            RPC_RequestSpawnPunchParticle(punchPosition, punchForward);
+        }
+    }
+
+    // ===== DEATH PARTICLE =====
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    public void RPC_SpawnDeathParticle(Vector3 position, Vector3 normal)
+    {
+        if (Time.time - _lastDeathSpawnTime < PARTICLE_SPAWN_COOLDOWN) return;
+        _lastDeathSpawnTime = Time.time;
+        SpawnParticleLocal(deathParticlePrefab, position, normal);
+    }
+
+    [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
+    public void RPC_RequestSpawnDeathParticle(Vector3 position, Vector3 normal)
+    {
+        RPC_SpawnDeathParticle(position, normal);
+    }
+
+    public void TriggerDeathParticle()
+    {
+        if (Runner == null) return;
+
+        GetGroundInfo(out Vector3 groundPosition, out Vector3 groundNormal);
+
+        if (Object.HasStateAuthority)
+        {
+            RPC_SpawnDeathParticle(groundPosition, groundNormal);
+        }
+        else if (Object.HasInputAuthority)
+        {
+            RPC_RequestSpawnDeathParticle(groundPosition, groundNormal);
         }
     }
 
