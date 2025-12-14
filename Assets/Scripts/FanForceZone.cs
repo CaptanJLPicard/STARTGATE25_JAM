@@ -81,16 +81,18 @@ public class FanForceZone : NetworkBehaviour
             Vector3 impulse = pushDir * strength;
 
             // Player'a push ve updraft uygula
-            //    player.AddExternalPush(impulse);
-            //    player.SetUpdraft(isUpdraft);
+            player.AddExternalPush(impulse);
+            player.SetUpdraft(isUpdraft);
         }
 
-        //// alandan çıkanlar -> updraft kapat
-        //foreach (var p in _previous)
-        //{
-        //    if (!_current.Contains(p) && p != null && p.Object)
-        //        p.SetUpdraft(false);
-        //}
+        // Alandan cikanlar -> push ve updraft sifirla
+        foreach (var p in _previous)
+        {
+            if (!_current.Contains(p) && p != null && p.Object)
+            {
+                p.ClearExternalPush();
+            }
+        }
     }
 
 #if UNITY_EDITOR

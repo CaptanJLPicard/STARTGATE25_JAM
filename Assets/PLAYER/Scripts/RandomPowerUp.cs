@@ -74,12 +74,18 @@ public class RandomPowerUp : NetworkBehaviour
             if (player == null) continue;
             if (player.Object == null || !player.Object.IsValid) continue;
 
-            // İlk bulunan geçerli player'a boost ver
+            // Aktif boost varsa alma - etkisi bitene kadar bekle
+            if (player.HasAnyActiveBoost())
+            {
+                continue;
+            }
+
+            // Ilk bulunan gecerli player'a boost ver
             IsCollected = true;
 
             Debug.Log($"[RandomPowerUp] {player.Nick} collected {SelectedBoostType} boost!");
 
-            // Boost'u uygula (Host tarafında)
+            // Boost'u uygula (Host tarafinda)
             player.ApplyBoost(SelectedBoostType, boostDuration, GetBoostValue(SelectedBoostType));
 
             // Despawn

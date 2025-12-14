@@ -7737,6 +7737,7 @@ Transform:
   - {fileID: 6974163398254857347}
   - {fileID: 6675139158264718257}
   - {fileID: 8998280998332592634}
+  - {fileID: 3165786387235959784}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!114 &3936847688211843571
@@ -7784,7 +7785,7 @@ MonoBehaviour:
   maxWalkableSlope: 45
   slopeCheckDistance: 0.6
   slopeCheckRadius: 0.1
-  shrinkDuration: 5
+  shrinkDuration: 2.5
   minScale: 0.8
   maxScale: 2
   startScale: 1
@@ -7837,6 +7838,7 @@ MonoBehaviour:
   minPlayerDistance: 0.6
   walkingFX: {fileID: 9085135115314903979}
   particleGroundCheckDistance: 5
+  walkFeedback: {fileID: 6277357106106668301}
   jumpParticlePrefab: {fileID: 6522446637742744975, guid: 10b859a0a5ba72944bd55e43ed7065ff, type: 3}
   _NetVelocity: {x: 0, y: 0, z: 0}
   _NetIsTouchingWall:
@@ -8507,3 +8509,76 @@ Transform:
   - {fileID: 1243466142207934412}
   m_Father: {fileID: 1954669922743269687}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1001 &2129937685942537619
+PrefabInstance:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Modification:
+    serializedVersion: 3
+    m_TransformParent: {fileID: 1092814285797086323}
+    m_Modifications:
+    - target: {fileID: 2090730471308919878, guid: 16f39e4138f74da409e33147536a00d3, type: 3}
+      propertyPath: m_Name
+      value: WalkingFeedback
+      objectReference: {fileID: 0}
+    - target: {fileID: 3918183320271584891, guid: 16f39e4138f74da409e33147536a00d3, type: 3}
+      propertyPath: m_LocalPosition.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3918183320271584891, guid: 16f39e4138f74da409e33147536a00d3, type: 3}
+      propertyPath: m_LocalPosition.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3918183320271584891, guid: 16f39e4138f74da409e33147536a00d3, type: 3}
+      propertyPath: m_LocalPosition.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3918183320271584891, guid: 16f39e4138f74da409e33147536a00d3, type: 3}
+      propertyPath: m_LocalRotation.w
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 3918183320271584891, guid: 16f39e4138f74da409e33147536a00d3, type: 3}
+      propertyPath: m_LocalRotation.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3918183320271584891, guid: 16f39e4138f74da409e33147536a00d3, type: 3}
+      propertyPath: m_LocalRotation.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3918183320271584891, guid: 16f39e4138f74da409e33147536a00d3, type: 3}
+      propertyPath: m_LocalRotation.z
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3918183320271584891, guid: 16f39e4138f74da409e33147536a00d3, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.x
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3918183320271584891, guid: 16f39e4138f74da409e33147536a00d3, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.y
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 3918183320271584891, guid: 16f39e4138f74da409e33147536a00d3, type: 3}
+      propertyPath: m_LocalEulerAnglesHint.z
+      value: 0
+      objectReference: {fileID: 0}
+    m_RemovedComponents: []
+    m_RemovedGameObjects: []
+    m_AddedGameObjects: []
+    m_AddedComponents: []
+  m_SourcePrefab: {fileID: 100100000, guid: 16f39e4138f74da409e33147536a00d3, type: 3}
+--- !u!4 &3165786387235959784 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: 3918183320271584891, guid: 16f39e4138f74da409e33147536a00d3, type: 3}
+  m_PrefabInstance: {fileID: 2129937685942537619}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &6277357106106668301 stripped
+MonoBehaviour:
+  m_CorrespondingSourceObject: {fileID: 5373542079891871902, guid: 16f39e4138f74da409e33147536a00d3, type: 3}
+  m_PrefabInstance: {fileID: 2129937685942537619}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6da43522623d4704e979466dc7650b65, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 

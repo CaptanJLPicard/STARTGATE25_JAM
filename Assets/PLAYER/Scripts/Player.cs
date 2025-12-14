@@ -2,6 +2,7 @@
 using System;
 using UnityEngine;
 using TMPro;
+using MoreMountains.Feedbacks;
 
 public class Player : NetworkBehaviour
 {
@@ -120,6 +121,7 @@ public class Player : NetworkBehaviour
     [Header("Visual Effects")]
     [SerializeField] private ParticleSystem walkingFX;            // YÃ¼rÃ¼rken toz efekti
     [SerializeField] private float particleGroundCheckDistance = 5f; // Zemin normal kontrolÃ¼ mesafesi
+    [SerializeField] private MMF_Player walkFeedback;
 
     [Header("Particle Effect Prefabs (Network Synced)")]
     [SerializeField] private GameObject jumpParticlePrefab;       // ZÄ±plarken spawn edilecek particle prefab
@@ -587,6 +589,32 @@ public class Player : NetworkBehaviour
                 ScaleBoostAmount = 0f;
                 Debug.Log($"[Boost] {Nick} Scale Boost bitti!");
             }
+
+            // === FAN PUSH SYSTEM ===
+            // ExternalPush'u velocity'ye uygula (sadece StateAuthority)
+            if (ExternalPush.sqrMagnitude > 0.001f)
+            {
+                Vector3 vel = _cc.Velocity;
+
+                // Updraft modunda: yercekimini dengele ve yukari it
+                if (IsInUpdraft)
+                {
+                    // Yercekimini notralize et ve push uygula
+                    vel += ExternalPush * Runner.DeltaTime;
+                    // Dusmeyi yavaslar (updraft etkisi)
+                    if (vel.y < 0)
+                    {
+                        vel.y *= 0.85f;
+                    }
+                }
+                else
+                {
+                    // Normal yatay push
+                    vel += ExternalPush * Runner.DeltaTime;
+                }
+
+                _cc.Velocity = vel;
+            }
         }
     }
 
@@ -1017,6 +1045,11 @@ public class Player : NetworkBehaviour
             if (param.name == paramName) return true;
         }
         return false;
+    }
+
+    public void RunWalkAudio()
+    {
+        walkFeedback.PlayFeedbacks();
     }
 
     #region MOMENTUM EFFECT SYSTEM
@@ -2106,6 +2139,14 @@ public class Player : NetworkBehaviour
         }
     }
 
+    /// <summary>
+    /// Herhangi bir aktif boost var mi kontrol eder
+    /// </summary>
+    public bool HasAnyActiveBoost()
+    {
+        return HasJumpBoost || HasSpeedBoost || HasScaleBoost;
+    }
+
     [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
     public void RPC_TeleportLockAndDance(Vector3 pos, Quaternion rot)
     {
@@ -2150,7 +2191,7 @@ public class Player : NetworkBehaviour
         // Wiggle kapat
         LockWiggleTemporarily();
 
-        // ✅ “dans” animasyonu: sende zaten Win trigger var
+        // ✅ "dans" animasyonu: sende zaten Win trigger var
         if (animator != null)
         {
             if (HasParameter(animator, "Win"))
@@ -2158,5 +2199,36 @@ public class Player : NetworkBehaviour
             else if (HasParameter(animator, "Dance"))
                 animator.SetTrigger("Dance");
         }
+    }
+
+    // ===== FAN FORCE ZONE SYSTEM =====
+
+    /// <summary>
+    /// Fan/Wind push ekler - Sadece StateAuthority cagirmali
+    /// Trigger icerisinde oldugu surece her tick cagirilir
+    /// </summary>
+    public void AddExternalPush(Vector3 push)
+    {
+        if (!Object.HasStateAuthority) return;
+        ExternalPush = push;
+    }
+
+    /// <summary>
+    /// Updraft (yukari ruzgar) durumunu ayarlar
+    /// </summary>
+    public void SetUpdraft(bool value)
+    {
+        if (!Object.HasStateAuthority) return;
+        IsInUpdraft = value;
+    }
+
+    /// <summary>
+    /// Push'u sifirlar - Trigger'dan ciktiginda cagirilir
+    /// </summary>
+    public void ClearExternalPush()
+    {
+        if (!Object.HasStateAuthority) return;
+        ExternalPush = Vector3.zero;
+        IsInUpdraft = false;
     }
 }

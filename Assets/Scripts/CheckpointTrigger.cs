@@ -4,7 +4,7 @@ using UnityEngine;
 public class CheckpointTrigger : NetworkBehaviour
 {
     [SerializeField] private LevelManager levelManager;
-    [SerializeField] private Transform spawnPoint; // ör: Spawn2Pos
+    [SerializeField] private Transform[] spawnPoint; // ör: Spawn2Pos
 
     private void Awake()
     {
@@ -22,6 +22,6 @@ public class CheckpointTrigger : NetworkBehaviour
         var player = other.GetComponent<Player>();
         if (player == null) return;
 
-        levelManager.ServerSetCheckpoint(player, spawnPoint);
+        levelManager.ServerSetCheckpoint(player, spawnPoint[Random.Range(0, spawnPoint.Length)]);
     }
 }
