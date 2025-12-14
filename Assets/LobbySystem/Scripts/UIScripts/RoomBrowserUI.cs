@@ -37,12 +37,13 @@ public class RoomBrowserUI : MonoBehaviour
     [Header("CharacterNameText")]
     [SerializeField] private Sprite[] characterSprite;
     [SerializeField] private Image characterImage;
+    [SerializeField] private GameObject[] charactersAnimations;
     private int characterIndex = 0;
 
     public void ChangePrefab(int i)
     {
         characterIndex += i;
-        if (characterIndex <= -1) characterIndex = 3;
+        if (characterIndex < 0) characterIndex = 3;
         else if (characterIndex >= 4) characterIndex = 0;
 
         if (fusion != null)
@@ -53,6 +54,28 @@ public class RoomBrowserUI : MonoBehaviour
         if (characterImage != null && characterSprite != null && characterIndex < characterSprite.Length)
         {
             characterImage.sprite = characterSprite[characterIndex];
+        }
+
+        // Animasyonları kontrol et
+        if (charactersAnimations != null && charactersAnimations.Length > 0)
+        {
+            // Tüm animasyonları önce false yapalım
+            foreach (var anim in charactersAnimations)
+            {
+                if (anim != null)
+                {
+                    anim.SetActive(false);
+                }
+            }
+
+            // Seçilen karakterin animasyonunu aktif yapalım
+            if (characterIndex >= 0 && characterIndex < charactersAnimations.Length)
+            {
+                if (charactersAnimations[characterIndex] != null)
+                {
+                    charactersAnimations[characterIndex].SetActive(true);
+                }
+            }
         }
     }
 
@@ -86,17 +109,39 @@ public class RoomBrowserUI : MonoBehaviour
             maxPlayersDropdown.onValueChanged.AddListener(OnMaxPlayersDropdownChanged);
         }
 
+        // Karakteri PlayerPrefs'den al ve seçili animasyonu aktif et
         if (PlayerPrefs.HasKey("SelectedCharacter"))
         {
             characterIndex = PlayerPrefs.GetInt("SelectedCharacter");
             if (characterIndex < 0) characterIndex = 0;
             if (characterIndex >= 4) characterIndex = 3;
 
+            // Animasyonları kontrol et ve doğru animasyonu aktif yap
+            if (charactersAnimations != null && charactersAnimations.Length > 0)
+            {
+                // İlk olarak tüm animasyonları kapatıyoruz
+                foreach (var anim in charactersAnimations)
+                {
+                    if (anim != null)
+                    {
+                        anim.SetActive(false);
+                    }
+                }
+
+                // Seçilen karakterin animasyonunu aktif yap
+                if (charactersAnimations[characterIndex] != null)
+                {
+                    charactersAnimations[characterIndex].SetActive(true);
+                }
+            }
+
+            // Görseli güncelle
             if (characterImage != null && characterSprite != null && characterIndex < characterSprite.Length)
             {
                 characterImage.sprite = characterSprite[characterIndex];
             }
 
+            // Fusion için karakteri ayarla
             if (fusion != null)
             {
                 fusion.SetCharacterIndex(characterIndex);

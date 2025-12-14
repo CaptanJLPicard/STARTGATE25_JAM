@@ -19,7 +19,7 @@ public class FanForceZone : NetworkBehaviour
     [SerializeField] private float pitchOffset = 0f;
 
     [Header("Updraft Settings")]
-    [Tooltip("pushDir.y bu deðerden büyükse alttan yukarý rüzgar sayýlýr")]
+    [Tooltip("pushDir.y bu deï¿½erden bï¿½yï¿½kse alttan yukarï¿½ rï¿½zgar sayï¿½lï¿½r")]
     [SerializeField] private float updraftThreshold = 0.35f;
 
     private float _timer;
@@ -35,7 +35,7 @@ public class FanForceZone : NetworkBehaviour
 
     public override void FixedUpdateNetwork()
     {
-        // Kuvveti tek otorite uygulasýn (host/state authority)
+        // Kuvveti tek otorite uygulasï¿½n (host/state authority)
         if (!HasStateAuthority) return;
 
         _timer += Runner.DeltaTime;
@@ -43,7 +43,7 @@ public class FanForceZone : NetworkBehaviour
         if (_timer < interval) return;
         _timer = 0f;
 
-        // önceki tick seti
+        // ï¿½nceki tick seti
         _previous.Clear();
         foreach (var p in _current) _previous.Add(p);
         _current.Clear();
@@ -80,17 +80,17 @@ public class FanForceZone : NetworkBehaviour
 
             Vector3 impulse = pushDir * strength;
 
-            // Player tarafýnda eklediðin RPC'ler
-            //player.RPC_AddExternalPush(impulse);
-            //player.RPC_SetUpdraft(isUpdraft);
+            // Player'a push ve updraft uygula
+            //    player.AddExternalPush(impulse);
+            //    player.SetUpdraft(isUpdraft);
         }
 
-        // alandan çýkanlar -> updraft kapat
-        foreach (var p in _previous)
-        {
-            //if (!_current.Contains(p))
-                //p.RPC_SetUpdraft(false);
-        }
+        //// alandan Ã§Ä±kanlar -> updraft kapat
+        //foreach (var p in _previous)
+        //{
+        //    if (!_current.Contains(p) && p != null && p.Object)
+        //        p.SetUpdraft(false);
+        //}
     }
 
 #if UNITY_EDITOR

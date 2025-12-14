@@ -35,18 +35,6 @@ public class PowerUp : NetworkBehaviour
         // Büyüme uygula
         player.Grow(growthAmount);
 
-        // Particle effect - HOST'a istek gönder, HOST spawn etsin, HERKES görsün
-        if (player.Object.HasStateAuthority)
-        {
-            // Ben HOST'um - direkt spawn et (herkese gider)
-            player.RPC_SpawnPowerUpParticle(transform.position, Vector3.up);
-        }
-        else
-        {
-            // Ben CLIENT'ım - HOST'a istek gönder
-            player.RPC_RequestSpawnPowerUpParticle(transform.position, Vector3.up);
-        }
-
         // Despawn - Host ise direkt, client ise RPC
         if (Object.HasStateAuthority)
         {
