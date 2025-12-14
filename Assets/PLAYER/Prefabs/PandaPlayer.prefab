@@ -7838,8 +7838,8 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 55
   cameraCollisionOffset: 0.1
-  moveSpeed: 1.5
-  sprintSpeed: 4
+  moveSpeed: 3.5
+  sprintSpeed: 6
   rotationSpeed: 10
   jumpForce: 7.5
   fallingThreshold: -2
@@ -7863,7 +7863,7 @@ MonoBehaviour:
   dropInterval: 1
   droppedPickupLifetime: 10
   droppedPickupActivationDelay: 0.5
-  droppedPickupGrowthAmount: 0.05
+  droppedPickupGrowthAmount: 0.15
   groundCheckDistance: 2
   groundLayer:
     serializedVersion: 2
@@ -7919,6 +7919,17 @@ MonoBehaviour:
   _RespawnPos: {x: 0, y: 0, z: 0}
   _CurrentScale: 0
   _MovementLocked:
+    _value: 0
+  _HasJumpBoost:
+    _value: 0
+  _HasSpeedBoost:
+    _value: 0
+  _HasScaleBoost:
+    _value: 0
+  _JumpBoostMultiplier: 0
+  _SpeedBoostMultiplier: 0
+  _ScaleBoostAmount: 0
+  _IsInUpdraft:
     _value: 0
 --- !u!114 &7710127339685332247
 MonoBehaviour:

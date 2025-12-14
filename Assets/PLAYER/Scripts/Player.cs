@@ -350,6 +350,24 @@ public class Player : NetworkBehaviour
 
         if (GetInput(out NetworkInputData input))
         {
+            if (MovementLocked)
+            {
+                IsMoving = false;
+                IsMovingForward = false;
+                IsSprinting = false;
+
+                NetVelocity = Vector3.zero;
+
+                if (_cc != null)
+                {
+                    _cc.Velocity = Vector3.zero;
+                    _cc.maxSpeed = 0f;
+                    _cc.Move(Vector3.zero);
+                }
+
+                return; // input okuma + hareket yok
+            }
+
             // Kamera rotasyonu
             Yaw += input.mouseDelta.x * mouseSensitivity;
             Pitch = Mathf.Clamp(Pitch - input.mouseDelta.y * mouseSensitivity, minPitch, maxPitch);
@@ -2085,6 +2103,60 @@ public class Player : NetworkBehaviour
 
             default:
                 return 0f;
+        }
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    public void RPC_TeleportLockAndDance(Vector3 pos, Quaternion rot)
+    {
+        // Hareket kilitle
+        MovementLocked = true;
+
+        // Kaymayı kes
+        NetVelocity = Vector3.zero;
+
+        if (_cc != null)
+        {
+            _cc.Velocity = Vector3.zero;
+            _cc.maxSpeed = 0f;
+            _cc.Move(Vector3.zero);
+
+            // Teleport (StateAuthority çağırıyor, ama RPC All olduğu için herkes kendi tarafında da set eder)
+            try { _cc.Teleport(pos); }
+            catch { transform.position = pos; }
+        }
+        else
+        {
+            transform.position = pos;
+        }
+
+        // ✅ ROTASYON: ışınlanılan transformun baktığı yöne kilitle
+        transform.rotation = rot;
+        ModelRotation = rot;                 // Networked model rot
+        _interpolatedModelRotation = rot;    // Render jitter önleme
+
+        // Interpolation pozisyon düzelt
+        _interpolatedPosition = pos;
+        _positionVelocity = Vector3.zero;
+
+        // Kamera yaw da aynı yöne kilitlensin (local player)
+        if (Object.HasInputAuthority)
+        {
+            float y = rot.eulerAngles.y;
+            _yaw = y;
+            Yaw = y; // Networked yaw
+        }
+
+        // Wiggle kapat
+        LockWiggleTemporarily();
+
+        // ✅ “dans” animasyonu: sende zaten Win trigger var
+        if (animator != null)
+        {
+            if (HasParameter(animator, "Win"))
+                animator.SetTrigger("Win");
+            else if (HasParameter(animator, "Dance"))
+                animator.SetTrigger("Dance");
         }
     }
 }

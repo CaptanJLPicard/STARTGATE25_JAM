@@ -87,10 +87,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 818c3ddadd4e5a64186fff99de45a8ab, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  boostDuration: 10
-  jumpBoostMultiplier: 1.5
-  speedBoostMultiplier: 1.5
-  scaleBoostAmount: 0.3
+  boostDuration: 15
+  jumpBoostMultiplier: 2
+  speedBoostMultiplier: 2
+  scaleBoostAmount: 1
   rotationSpeed: 50
   bobSpeed: 2
   bobHeight: 0.3
