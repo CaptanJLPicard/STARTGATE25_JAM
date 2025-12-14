@@ -198,10 +198,10 @@ MonoBehaviour:
   currentMaxPlayers: 2
   buttonCountdown: 0
   characterSprite:
-  - {fileID: 21300000, guid: 8c168443fea279d499b10acf3ff3fb62, type: 3}
-  - {fileID: 21300000, guid: 3781691bd702c684bb0f7941f0a1b72d, type: 3}
-  - {fileID: 21300000, guid: 80312d2a197a7ae4897e7d1c0d5c7d90, type: 3}
-  - {fileID: 21300000, guid: 11bf2a2dd5b7ac84ea3ca6ddcbc9c92d, type: 3}
+  - {fileID: 21300000, guid: f03dee2490bdbdf42a70b5549809b13b, type: 3}
+  - {fileID: 21300000, guid: 7f92cb772ebc6a14bb391c73741c3bac, type: 3}
+  - {fileID: 21300000, guid: 301590c32f9df3f47bd04c1e0a55d9f2, type: 3}
+  - {fileID: 21300000, guid: 97e2d6ef6b5e61248a5a4bb90a287ff7, type: 3}
   characterImage: {fileID: 418238339}
 --- !u!1 &86528542
 GameObject:
